@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+*.log
+coverage/
+.vite/
+packages/server/public/
+.diagrams/
+!examples/.diagrams/
+.env

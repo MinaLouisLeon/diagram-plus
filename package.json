@@ -1,0 +1,27 @@
+{
+  "name": "diagram-plus-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/core",
+    "packages/server",
+    "packages/mcp",
+    "packages/web"
+  ],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "npm run build -w @diagram-plus/core && npm run build -w @diagram-plus/web && npm run build -w @diagram-plus/server && npm run build -w @diagram-plus/mcp",
+    "build:libs": "npm run build -w @diagram-plus/core && npm run build -w @diagram-plus/server && npm run build -w @diagram-plus/mcp",
+    "dev": "npm run dev -w @diagram-plus/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.9.3",
+    "tsx": "^4.19.2",
+    "vitest": "^2.1.8"
+  }
+}
