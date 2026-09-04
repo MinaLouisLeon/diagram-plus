@@ -6,7 +6,5 @@ dist/
 coverage/
 .vite/
 packages/server/public/
-.diagrams/
-!examples/.diagrams/
 .env
 .scratch/

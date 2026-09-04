@@ -1,0 +1,767 @@
+{
+  "formatVersion": 1,
+  "id": "dgm_0tpll8q0",
+  "slug": "recipe-box",
+  "name": "Recipe Box",
+  "description": "Save recipes, plan a week of meals, and generate a shopping list.",
+  "projectGoal": "A web app where a household saves recipes, drags them onto a weekly meal plan, and gets a combined shopping list they can check off at the shop.",
+  "techStack": {
+    "language": "TypeScript",
+    "frontend": "React",
+    "backend": "Fastify",
+    "database": "PostgreSQL",
+    "packages": [],
+    "notes": ""
+  },
+  "status": "ready",
+  "revision": 9,
+  "blocks": [
+    {
+      "id": "blk_4ilxtc64",
+      "name": "Environment",
+      "summary": "",
+      "description": "",
+      "position": {
+        "x": 80,
+        "y": 80
+      },
+      "size": {
+        "width": 280,
+        "height": 150
+      },
+      "groupId": null,
+      "tags": [],
+      "color": "",
+      "implementation": {
+        "status": "todo",
+        "files": [],
+        "notes": "",
+        "updatedAt": ""
+      },
+      "createdAt": "2026-09-04T12:49:01.689Z",
+      "updatedAt": "2026-09-04T12:49:01.689Z",
+      "type": "config",
+      "data": {
+        "keys": [
+          {
+            "name": "DATABASE_URL",
+            "description": "Postgres connection string",
+            "required": true,
+            "secret": true,
+            "example": ""
+          },
+          {
+            "name": "SESSION_SECRET",
+            "description": "Signs session cookies",
+            "required": true,
+            "secret": true,
+            "example": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "blk_kxu90nd1",
+      "name": "User",
+      "summary": "A household member",
+      "description": "",
+      "position": {
+        "x": 1820,
+        "y": 367
+      },
+      "size": {
+        "width": 300,
+        "height": 170
+      },
+      "groupId": null,
+      "tags": [],
+      "color": "",
+      "implementation": {
+        "status": "todo",
+        "files": [],
+        "notes": "",
+        "updatedAt": ""
+      },
+      "createdAt": "2026-09-04T12:49:01.689Z",
+      "updatedAt": "2026-09-04T12:52:05.857Z",
+      "type": "data_model",
+      "data": {
+        "storage": "",
+        "tableName": "users",
+        "fields": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "required": true,
+            "description": "",
+            "example": ""
+          },
+          {
+            "name": "email",
+            "type": "string",
+            "required": true,
+            "description": "",
+            "example": ""
+          },
+          {
+            "name": "name",
+            "type": "string",
+            "required": false,
+            "description": "",
+            "example": ""
+          }
+        ],
+        "relations": [],
+        "indexes": [],
+        "constraints": []
+      }
+    },
+    {
+      "id": "blk_4dg9su16",
+      "name": "Recipe",
+      "summary": "A saved recipe",
+      "description": "",
+      "position": {
+        "x": 1380,
+        "y": 476
+      },
+      "size": {
+        "width": 300,
+        "height": 170
+      },
+      "groupId": null,
+      "tags": [],
+      "color": "",
+      "implementation": {
+        "status": "todo",
+        "files": [],
+        "notes": "",
+        "updatedAt": ""
+      },
+      "createdAt": "2026-09-04T12:49:01.690Z",
+      "updatedAt": "2026-09-04T12:52:05.869Z",
+      "type": "data_model",
+      "data": {
+        "storage": "",
+        "tableName": "recipes",
+        "fields": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "required": true,
+            "description": "",
+            "example": ""
+          },
+          {
+            "name": "title",
+            "type": "string",
+            "required": true,
+            "description": "",
+            "example": ""
+          },
+          {
+            "name": "servings",
+            "type": "int",
+            "required": false,
+            "description": "",
+            "example": ""
+          },
+          {
+            "name": "ingredients",
+            "type": "Ingredient[]",
+            "required": true,
+            "description": "",
+            "example": ""
+          }
+        ],
+        "relations": [
+          {
+            "to": "User",
+            "kind": "many-to-one",
+            "description": "Who saved it"
+          }
+        ],
+        "indexes": [
+          "recipes_user_id_idx"
+        ],
+        "constraints": []
+      }
+    },
+    {
+      "id": "blk_muuyhf2c",
+      "name": "MealPlan",
+      "summary": "One week of meals",
+      "description": "",
+      "position": {
+        "x": 1380,
+        "y": 258
+      },
+      "size": {
+        "width": 300,
+        "height": 170
+      },
+      "groupId": null,
+      "tags": [],
+      "color": "",
+      "implementation": {
+        "status": "todo",
+        "files": [],
+        "notes": "",
+        "updatedAt": ""
+      },
+      "createdAt": "2026-09-04T12:49:01.690Z",
+      "updatedAt": "2026-09-04T12:49:01.690Z",
+      "type": "data_model",
+      "data": {
+        "storage": "",
+        "tableName": "meal_plans",
+        "fields": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "required": true,
+            "description": "",
+            "example": ""
+          },
+          {
+            "name": "weekOf",
+            "type": "date",
+            "required": true,
+            "description": "",
+            "example": ""
+          }
+        ],
+        "relations": [
+          {
+            "to": "Recipe",
+            "kind": "many-to-many",
+            "description": ""
+          },
+          {
+            "to": "User",
+            "kind": "many-to-one",
+            "description": ""
+          }
+        ],
+        "indexes": [],
+        "constraints": []
+      }
+    },
+    {
+      "id": "blk_vofs3zq7",
+      "name": "ShoppingListService",
+      "summary": "Turns a plan into a list",
+      "description": "",
+      "position": {
+        "x": 940,
+        "y": 367
+      },
+      "size": {
+        "width": 300,
+        "height": 170
+      },
+      "groupId": null,
+      "tags": [],
+      "color": "",
+      "implementation": {
+        "status": "todo",
+        "files": [],
+        "notes": "",
+        "updatedAt": ""
+      },
+      "createdAt": "2026-09-04T12:49:01.690Z",
+      "updatedAt": "2026-09-04T12:52:05.875Z",
+      "type": "service",
+      "data": {
+        "responsibility": "Combine the ingredients of every recipe in a meal plan into one de-duplicated shopping list.",
+        "functions": [
+          {
+            "name": "buildList",
+            "description": "",
+            "params": [
+              {
+                "name": "planId",
+                "type": "uuid",
+                "required": true,
+                "description": "",
+                "example": ""
+              }
+            ],
+            "returns": "ShoppingList",
+            "steps": [
+              "load the meal plan and its recipes",
+              "flatten every ingredient",
+              "merge duplicates, summing quantities",
+              "sort by supermarket aisle",
+              "return the list"
+            ],
+            "throws": [],
+            "async": true
+          }
+        ],
+        "dependencies": []
+      }
+    },
+    {
+      "id": "blk_06rhbca4",
+      "name": "List recipes",
+      "summary": "",
+      "description": "",
+      "position": {
+        "x": 500,
+        "y": 377
+      },
+      "size": {
+        "width": 300,
+        "height": 170
+      },
+      "groupId": null,
+      "tags": [],
+      "color": "",
+      "implementation": {
+        "status": "todo",
+        "files": [],
+        "notes": "",
+        "updatedAt": ""
+      },
+      "createdAt": "2026-09-04T12:49:01.690Z",
+      "updatedAt": "2026-09-04T12:49:01.690Z",
+      "type": "api_endpoint",
+      "data": {
+        "method": "GET",
+        "path": "/api/recipes",
+        "auth": "user",
+        "summary": "Every recipe the signed-in household has saved",
+        "pathParams": [],
+        "queryParams": [
+          {
+            "name": "search",
+            "type": "string",
+            "required": false,
+            "description": "",
+            "example": ""
+          }
+        ],
+        "requestBody": [],
+        "responses": [
+          {
+            "status": 200,
+            "description": "Recipes",
+            "body": [
+              {
+                "name": "recipes",
+                "type": "Recipe[]",
+                "required": false,
+                "description": "",
+                "example": ""
+              }
+            ]
+          }
+        ],
+        "errors": [],
+        "notes": ""
+      }
+    },
+    {
+      "id": "blk_1agqxfgo",
+      "name": "Get shopping list",
+      "summary": "",
+      "description": "",
+      "position": {
+        "x": 500,
+        "y": 159
+      },
+      "size": {
+        "width": 300,
+        "height": 170
+      },
+      "groupId": null,
+      "tags": [],
+      "color": "",
+      "implementation": {
+        "status": "todo",
+        "files": [],
+        "notes": "",
+        "updatedAt": ""
+      },
+      "createdAt": "2026-09-04T12:49:01.690Z",
+      "updatedAt": "2026-09-04T12:49:01.690Z",
+      "type": "api_endpoint",
+      "data": {
+        "method": "GET",
+        "path": "/api/plans/:id/shopping-list",
+        "auth": "user",
+        "summary": "",
+        "pathParams": [
+          {
+            "name": "id",
+            "type": "uuid",
+            "required": true,
+            "description": "",
+            "example": ""
+          }
+        ],
+        "queryParams": [],
+        "requestBody": [],
+        "responses": [
+          {
+            "status": 200,
+            "description": "The combined list",
+            "body": []
+          }
+        ],
+        "errors": [
+          {
+            "status": 404,
+            "code": "plan_not_found",
+            "when": "No plan with that id"
+          }
+        ],
+        "notes": ""
+      }
+    },
+    {
+      "id": "blk_agsizohm",
+      "name": "Recipe list",
+      "summary": "",
+      "description": "",
+      "position": {
+        "x": 80,
+        "y": 674
+      },
+      "size": {
+        "width": 280,
+        "height": 150
+      },
+      "groupId": null,
+      "tags": [],
+      "color": "",
+      "implementation": {
+        "status": "todo",
+        "files": [],
+        "notes": "",
+        "updatedAt": ""
+      },
+      "createdAt": "2026-09-04T12:49:01.690Z",
+      "updatedAt": "2026-09-04T12:49:01.690Z",
+      "type": "ui_screen",
+      "data": {
+        "route": "/recipes",
+        "purpose": "Browse and search saved recipes",
+        "layout": "",
+        "components": [
+          "RecipeCard",
+          "SearchBar"
+        ],
+        "state": [],
+        "actions": [
+          {
+            "name": "Open recipe",
+            "description": "",
+            "calls": "Recipe detail"
+          }
+        ],
+        "permissions": []
+      }
+    },
+    {
+      "id": "blk_w45no2h2",
+      "name": "Weekly planner",
+      "summary": "",
+      "description": "",
+      "position": {
+        "x": 80,
+        "y": 476
+      },
+      "size": {
+        "width": 280,
+        "height": 150
+      },
+      "groupId": null,
+      "tags": [],
+      "color": "",
+      "implementation": {
+        "status": "todo",
+        "files": [],
+        "notes": "",
+        "updatedAt": ""
+      },
+      "createdAt": "2026-09-04T12:49:01.690Z",
+      "updatedAt": "2026-09-04T12:49:01.690Z",
+      "type": "ui_screen",
+      "data": {
+        "route": "/plan",
+        "purpose": "Drag recipes onto days of the week",
+        "layout": "",
+        "components": [
+          "RecipeCard"
+        ],
+        "state": [],
+        "actions": [
+          {
+            "name": "Generate shopping list",
+            "description": "",
+            "calls": "Get shopping list"
+          }
+        ],
+        "permissions": []
+      }
+    },
+    {
+      "id": "blk_y7m66wby",
+      "name": "RecipeCard",
+      "summary": "",
+      "description": "",
+      "position": {
+        "x": 500,
+        "y": 595
+      },
+      "size": {
+        "width": 280,
+        "height": 150
+      },
+      "groupId": null,
+      "tags": [],
+      "color": "",
+      "implementation": {
+        "status": "todo",
+        "files": [],
+        "notes": "",
+        "updatedAt": ""
+      },
+      "createdAt": "2026-09-04T12:49:01.690Z",
+      "updatedAt": "2026-09-04T12:49:01.690Z",
+      "type": "ui_component",
+      "data": {
+        "purpose": "Shows a recipe at a glance",
+        "props": [
+          {
+            "name": "recipe",
+            "type": "Recipe",
+            "required": true,
+            "description": "",
+            "example": ""
+          },
+          {
+            "name": "draggable",
+            "type": "boolean",
+            "required": false,
+            "description": "",
+            "example": ""
+          }
+        ],
+        "emits": [
+          {
+            "name": "select",
+            "payload": "recipeId",
+            "description": ""
+          }
+        ],
+        "state": [],
+        "variants": []
+      }
+    },
+    {
+      "id": "blk_mp75swf7",
+      "name": "Weekly plan reminder",
+      "summary": "",
+      "description": "",
+      "position": {
+        "x": 80,
+        "y": 278
+      },
+      "size": {
+        "width": 280,
+        "height": 150
+      },
+      "groupId": null,
+      "tags": [],
+      "color": "",
+      "implementation": {
+        "status": "todo",
+        "files": [],
+        "notes": "",
+        "updatedAt": ""
+      },
+      "createdAt": "2026-09-04T12:49:01.691Z",
+      "updatedAt": "2026-09-04T12:49:01.691Z",
+      "type": "job",
+      "data": {
+        "trigger": "cron",
+        "schedule": "0 17 * * 0",
+        "steps": [
+          "find households with no plan for next week",
+          "send a reminder email"
+        ],
+        "idempotent": true,
+        "retries": 0,
+        "notes": ""
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edg_wzvc9ndt",
+      "type": "calls",
+      "source": "blk_agsizohm",
+      "target": "blk_06rhbca4",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "label": "",
+      "description": "",
+      "condition": "",
+      "payload": [],
+      "createdAt": "2026-09-04T12:49:01.691Z",
+      "updatedAt": "2026-09-04T12:49:01.691Z"
+    },
+    {
+      "id": "edg_pjyqwe8p",
+      "type": "renders",
+      "source": "blk_agsizohm",
+      "target": "blk_y7m66wby",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "label": "",
+      "description": "",
+      "condition": "",
+      "payload": [],
+      "createdAt": "2026-09-04T12:49:01.691Z",
+      "updatedAt": "2026-09-04T12:49:01.691Z"
+    },
+    {
+      "id": "edg_9gb0ssdi",
+      "type": "renders",
+      "source": "blk_w45no2h2",
+      "target": "blk_y7m66wby",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "label": "",
+      "description": "",
+      "condition": "",
+      "payload": [],
+      "createdAt": "2026-09-04T12:49:01.691Z",
+      "updatedAt": "2026-09-04T12:49:01.691Z"
+    },
+    {
+      "id": "edg_cbnd5k75",
+      "type": "calls",
+      "source": "blk_w45no2h2",
+      "target": "blk_1agqxfgo",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "label": "",
+      "description": "",
+      "condition": "",
+      "payload": [],
+      "createdAt": "2026-09-04T12:49:01.691Z",
+      "updatedAt": "2026-09-04T12:49:01.691Z"
+    },
+    {
+      "id": "edg_j751xwvr",
+      "type": "calls",
+      "source": "blk_1agqxfgo",
+      "target": "blk_vofs3zq7",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "label": "",
+      "description": "",
+      "condition": "",
+      "payload": [],
+      "createdAt": "2026-09-04T12:49:01.691Z",
+      "updatedAt": "2026-09-04T12:49:01.691Z"
+    },
+    {
+      "id": "edg_c8jrhzf4",
+      "type": "reads",
+      "source": "blk_06rhbca4",
+      "target": "blk_4dg9su16",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "label": "",
+      "description": "",
+      "condition": "",
+      "payload": [],
+      "createdAt": "2026-09-04T12:49:01.691Z",
+      "updatedAt": "2026-09-04T12:49:01.691Z"
+    },
+    {
+      "id": "edg_aywfx4y0",
+      "type": "reads",
+      "source": "blk_vofs3zq7",
+      "target": "blk_muuyhf2c",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "label": "",
+      "description": "",
+      "condition": "",
+      "payload": [],
+      "createdAt": "2026-09-04T12:49:01.691Z",
+      "updatedAt": "2026-09-04T12:49:01.691Z"
+    },
+    {
+      "id": "edg_z3sngoo3",
+      "type": "reads",
+      "source": "blk_vofs3zq7",
+      "target": "blk_4dg9su16",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "label": "",
+      "description": "",
+      "condition": "",
+      "payload": [],
+      "createdAt": "2026-09-04T12:49:01.691Z",
+      "updatedAt": "2026-09-04T12:49:01.691Z"
+    },
+    {
+      "id": "edg_ax0fyoyf",
+      "type": "depends_on",
+      "source": "blk_4dg9su16",
+      "target": "blk_kxu90nd1",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "label": "",
+      "description": "",
+      "condition": "",
+      "payload": [],
+      "createdAt": "2026-09-04T12:49:01.691Z",
+      "updatedAt": "2026-09-04T12:49:01.691Z"
+    },
+    {
+      "id": "edg_gynap37j",
+      "type": "depends_on",
+      "source": "blk_muuyhf2c",
+      "target": "blk_kxu90nd1",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "label": "",
+      "description": "",
+      "condition": "",
+      "payload": [],
+      "createdAt": "2026-09-04T12:49:01.691Z",
+      "updatedAt": "2026-09-04T12:49:01.691Z"
+    },
+    {
+      "id": "edg_ukodsphs",
+      "type": "reads",
+      "source": "blk_mp75swf7",
+      "target": "blk_muuyhf2c",
+      "sourceHandle": null,
+      "targetHandle": null,
+      "label": "",
+      "description": "",
+      "condition": "",
+      "payload": [],
+      "createdAt": "2026-09-04T12:49:01.691Z",
+      "updatedAt": "2026-09-04T12:49:01.691Z"
+    }
+  ],
+  "groups": [],
+  "canvas": {
+    "x": -207.42023529411756,
+    "y": 157.76027058823536,
+    "zoom": 0.6759529411764704
+  },
+  "createdAt": "2026-09-04T12:49:01.683Z",
+  "updatedAt": "2026-09-04T12:52:05.875Z",
+  "notes": ""
+}

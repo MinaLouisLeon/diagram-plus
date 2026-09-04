@@ -54,6 +54,14 @@ export function Toolbar({ onNewDiagram }: { onNewDiagram: () => void }) {
             ) : null}
           </button>
           <button
+            className={`btn${panel === 'progress' ? ' primary' : ''}`}
+            onClick={() => store.setPanel('progress')}
+            title="Build order and what has been implemented"
+          >
+            Progress
+            {stats && stats.completion > 0 ? <span>{stats.completion}%</span> : null}
+          </button>
+          <button
             className={`btn${panel === 'spec' ? ' primary' : ''}`}
             onClick={() => store.setPanel('spec')}
             title="Preview what Claude will read"

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { generateSpec } from '@diagram-plus/core/browser';
+import { BLOCK_CATALOG, buildOrder, diagramStats, generateSpec } from '@diagram-plus/core/browser';
 import { store, useEditorState } from '../store';
 
 /**
@@ -12,6 +12,7 @@ export function BottomPanel() {
   const { panel } = useEditorState();
   if (panel === 'validation') return <ValidationPanel />;
   if (panel === 'spec') return <SpecPanel />;
+  if (panel === 'progress') return <ProgressPanel />;
   return null;
 }
 
@@ -86,6 +87,59 @@ function SpecPanel() {
       </div>
       <div className="panel-body">
         <pre className="spec">{markdown}</pre>
+      </div>
+    </div>
+  );
+}
+
+
+/**
+ * Build order and what has been built.
+ *
+ * This is the view to leave open while Claude works through the spec: each
+ * `mark_block_implemented` call lands here within a second.
+ */
+function ProgressPanel() {
+  const { current } = useEditorState();
+  if (!current) return null;
+
+  const stats = diagramStats(current);
+  const { phases } = buildOrder(current);
+
+  return (
+    <div className="panel">
+      <div className="panel-header">
+        <strong>Build order</strong>
+        <span>
+          {stats.implemented} done · {stats.inProgress} in progress · {stats.todo} to do
+        </span>
+        <div className="toolbar-spacer" />
+        <button className="btn subtle icon" onClick={() => store.setPanel(null)}>
+          ×
+        </button>
+      </div>
+      <div className="panel-body">
+        <div className="progress" style={{ marginBottom: 12 }}>
+          <div style={{ width: `${stats.completion}%` }} />
+        </div>
+        {phases.map((phase) => (
+          <div key={phase.index} style={{ marginBottom: 10 }}>
+            <div className="section-label" style={{ margin: '0 0 4px' }}>
+              {phase.index}. {phase.label}
+            </div>
+            {phase.blocks.map((block) => (
+              <div key={block.id} className="issue" onClick={() => store.select([block.id])}>
+                <span className={`impl ${block.implementation.status}`} style={{ position: 'static', marginTop: 6 }} />
+                <span className="text">
+                  {BLOCK_CATALOG[block.type].icon} {block.name}
+                  {block.implementation.files.length ? (
+                    <em>{block.implementation.files.join(', ')}</em>
+                  ) : null}
+                </span>
+              </div>
+            ))}
+          </div>
+        ))}
       </div>
     </div>
   );

@@ -8,10 +8,12 @@
     "packages/mcp",
     "packages/web"
   ],
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "npm run build -w @diagram-plus/core && npm run build -w @diagram-plus/web && npm run build -w @diagram-plus/server && npm run build -w @diagram-plus/mcp",
-    "build:libs": "npm run build -w @diagram-plus/core && npm run build -w @diagram-plus/server && npm run build -w @diagram-plus/mcp",
+    "build": "npm run build -w @diagram-plus/core && npm run build -w @diagram-plus/mcp && npm run build -w @diagram-plus/server && npm run build -w @diagram-plus/web",
+    "build:libs": "npm run build -w @diagram-plus/core && npm run build -w @diagram-plus/mcp && npm run build -w @diagram-plus/server",
     "dev": "npm run dev -w @diagram-plus/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",

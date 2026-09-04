@@ -234,6 +234,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   position: absolute; top: 8px; right: 8px;
   width: 7px; height: 7px; border-radius: 50%;
 }
+.impl { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .impl.todo { background: var(--text-dim); }
 .impl.in_progress { background: var(--warning); }
 .impl.done { background: var(--success); }

@@ -55,87 +55,92 @@ edits the diagram.
 ## Phases
 
 ### Phase 0 — Foundation
-- [ ] npm workspaces monorepo, TypeScript project references, ESM throughout
-- [ ] Shared tsconfig, build + test + typecheck scripts
-- [ ] `.gitignore`, license, README skeleton, this roadmap
+- [x] npm workspaces monorepo, TypeScript project references, ESM throughout
+- [x] Shared tsconfig, build + test + typecheck scripts
+- [x] `.gitignore`, license, README skeleton, this roadmap
 
 ### Phase 1 — Core diagram model + file store
-- [ ] `Diagram` schema: id, name, goal, tech stack, status (draft/ready), revision, timestamps
-- [ ] **Typed blocks** — 15 kinds, each with its own structured payload:
+- [x] `Diagram` schema: id, name, goal, tech stack, status (draft/ready), revision, timestamps
+- [x] **Typed blocks** — 15 kinds, each with its own structured payload:
       `ui_screen`, `ui_component`, `api_endpoint`, `service`, `function`, `data_model`,
       `datastore`, `external_service`, `job`, `event`, `decision`, `loop`, `config`,
       `note`, `custom`
-- [ ] **Typed edges** — `calls`, `data_flow`, `navigation`, `renders`, `reads`, `writes`,
+- [x] **Typed edges** — `calls`, `data_flow`, `navigation`, `renders`, `reads`, `writes`,
       `emits`, `listens`, `depends_on`, `conditional`, `error_flow`
-- [ ] Groups (visual modules) and free notes
-- [ ] Zod validation + a semantic validator (dangling edges, empty models, orphans,
+- [x] Groups (visual modules) and free notes
+- [x] Zod validation + a semantic validator (dangling edges, empty models, orphans,
       type-compatibility warnings, duplicate names)
-- [ ] File store: `.diagrams/<slug>.diagram.json`, atomic writes, slug collisions,
+- [x] File store: `.diagrams/<slug>.diagram.json`, atomic writes, slug collisions,
       revision bumping, format migrations
 
 ### Phase 2 — Spec generator, layout, exporters
-- [ ] **Markdown implementation spec** — the artifact Claude reads to build the app:
+- [x] **Markdown implementation spec** — the artifact Claude reads to build the app:
       goal, stack, build order, per-block contracts, data models, endpoint tables, flows
-- [ ] Topological **build order** analysis (what to implement first)
-- [ ] Auto-layout engine (layered, dependency-aware) for MCP-created diagrams
-- [ ] Mermaid export, JSON export
+- [x] Topological **build order** analysis (what to implement first)
+- [x] Auto-layout engine (layered, dependency-aware) for MCP-created diagrams
+- [x] Mermaid export, JSON export
 
 ### Phase 3 — Local server + CLI
-- [ ] REST API over the store (diagrams, blocks, edges, groups, status, spec, export)
-- [ ] Optimistic concurrency via `revision`
-- [ ] chokidar watch on `.diagrams/` with self-write de-duplication
-- [ ] WebSocket broadcast: `diagram:changed`, `diagram:created`, `diagram:deleted`
-- [ ] Static hosting of the built editor
-- [ ] `dgp` CLI: `open` (default), `mcp`, `init`, `export`, `install-mcp`
+- [x] REST API over the store (diagrams, blocks, edges, groups, status, spec, export)
+- [x] Optimistic concurrency via `revision`
+- [x] chokidar watch on `.diagrams/` with self-write de-duplication
+- [x] WebSocket broadcast: `diagram:changed`, `diagram:created`, `diagram:deleted`
+- [x] Static hosting of the built editor
+- [x] `dgp` CLI: `open` (default), `mcp`, `init`, `export`, `install-mcp`
 
 ### Phase 4 — Web editor
-- [ ] Canvas: pan/zoom, minimap, grid, multi-select, box-select
-- [ ] Block palette with drag-and-drop onto the canvas
-- [ ] Per-type node rendering (colour, icon, key fields preview, status badge)
-- [ ] Draw typed connections between blocks, with an edge-type picker
-- [ ] **Inspector panel** — schema-driven forms per block type (fields, params,
+- [x] Canvas: pan/zoom, minimap, grid, multi-select, box-select
+- [x] Block palette with drag-and-drop onto the canvas
+- [x] Per-type node rendering (colour, icon, key fields preview, status badge)
+- [x] Draw typed connections between blocks, with an edge-type picker
+- [x] **Inspector panel** — schema-driven forms per block type (fields, params,
       pseudo-code steps, endpoints, relations …)
-- [ ] Undo/redo, duplicate, delete, keyboard shortcuts
-- [ ] Diagram switcher + create/rename/delete
-- [ ] Validation panel (errors and warnings, click to focus the block)
-- [ ] Live-sync indicator, "Claude just edited this" awareness
-- [ ] Save / Mark-ready control, auto-layout button, export menu
-- [ ] Dark and light themes
+- [x] Undo/redo, duplicate, delete, keyboard shortcuts
+- [x] Diagram switcher + create/rename/delete
+- [x] Validation panel (errors and warnings, click to focus the block)
+- [x] Live-sync indicator, "Claude just edited this" awareness
+- [x] Save / Mark-ready control, auto-layout button, export menu
+- [x] Dark and light themes
 
 ### Phase 5 — MCP server
-- [ ] Discovery: `describe_block_schema` so Claude knows every field it can fill
-- [ ] Create: `create_diagram`, `create_diagram_from_outline` (whole diagram in one call)
-- [ ] Read: `list_diagrams`, `get_diagram`, `search_blocks`, `read_implementation_spec`
-- [ ] Edit: `add_blocks`, `update_block`, `delete_blocks`, `add_edges`, `update_edge`,
+- [x] Discovery: `describe_block_schema` so Claude knows every field it can fill
+- [x] Create: `create_diagram`, `create_diagram_from_outline` (whole diagram in one call)
+- [x] Read: `list_diagrams`, `get_diagram`, `search_blocks`, `read_implementation_spec`
+- [x] Edit: `add_blocks`, `update_block`, `delete_blocks`, `add_edges`, `update_edge`,
       `delete_edges`, `move_blocks`, `auto_layout`, `apply_batch`
-- [ ] Lifecycle: `set_diagram_status`, `validate_diagram`, `delete_diagram`, `export_diagram`
-- [ ] `open_editor` — hands the user the URL to review the diagram
-- [ ] MCP **resources** (`diagram://<slug>`) and **prompts** (`design_project`,
+- [x] Lifecycle: `set_diagram_status`, `validate_diagram`, `delete_diagram`, `export_diagram`
+- [x] `open_editor` — hands the user the URL to review the diagram
+- [x] MCP **resources** (`diagram://<slug>`) and **prompts** (`design_project`,
       `implement_from_diagram`)
 
 ### Phase 6 — Implementation bridge
-- [ ] `status: draft | ready` gating so Claude never implements a half-finished diagram
-- [ ] Per-block implementation status (`todo` / `in_progress` / `done`) + linked files
-- [ ] `mark_block_implemented` so progress is visible on the canvas while Claude codes
-- [ ] `implementation_progress` summary tool
+- [x] `status: draft | ready` gating so Claude never implements a half-finished diagram
+- [x] Per-block implementation status (`todo` / `in_progress` / `done`) + linked files
+- [x] `mark_block_implemented` so progress is visible on the canvas while Claude codes
+- [x] `implementation_progress` summary tool
 
 ### Phase 7 — Tests, docs, packaging
-- [ ] Vitest suites: schema, validation, store, layout, spec generator, REST API, MCP tools
-- [ ] End-to-end test of the whole loop (create → edit → ready → read spec)
-- [ ] README with install + usage, docs for the block catalog and MCP tools
-- [ ] `dgp install-mcp` writes the Claude Code `.mcp.json` entry
+- [x] Vitest suites: schema, validation, store, layout, spec generator, REST API, MCP tools
+- [x] End-to-end test of the whole loop (create → edit → ready → read spec)
+- [x] README with install + usage, docs for the block catalog and MCP tools
+- [x] `dgp install-mcp` writes the Claude Code `.mcp.json` entry
 
 ---
 
 ## Progress
 
-| Phase | Status |
-|---|---|
-| 0 — Foundation | ⬜ not started |
-| 1 — Core model | ⬜ not started |
-| 2 — Spec + layout | ⬜ not started |
-| 3 — Server + CLI | ⬜ not started |
-| 4 — Web editor | ⬜ not started |
-| 5 — MCP server | ⬜ not started |
-| 6 — Implementation bridge | ⬜ not started |
-| 7 — Tests + docs | ⬜ not started |
+| Phase | Status | Landed in |
+|---|---|---|
+| 0 — Foundation | ✅ done | npm workspaces, shared tsconfig, build/test scripts |
+| 1 — Core model | ✅ done | `packages/core` — 15 block types, 11 connection types, store, validator |
+| 2 — Spec + layout | ✅ done | `spec.ts`, `layout.ts`, `analysis.ts`, `export.ts` |
+| 3 — Server + CLI | ✅ done | `packages/server` — REST, WebSocket, file watch, `dgp` |
+| 4 — Web editor | ✅ done | `packages/web` — canvas, palette, generated inspector, panels |
+| 5 — MCP server | ✅ done | `packages/mcp` — 25 tools, 1 resource, 2 prompts |
+| 6 — Implementation bridge | ✅ done | status gating, per-block progress, build-order panel |
+| 7 — Tests + docs | ✅ done | 100 tests, README, generated block reference, MCP reference |
+
+**Everything in this roadmap is built.** `npm test` runs 100 tests across the three
+non-UI packages, including an end-to-end pass over the whole loop; the editor was
+driven in a real browser to confirm the canvas, the inspector, live sync and the
+progress panel all work.

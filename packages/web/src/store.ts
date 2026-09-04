@@ -19,7 +19,7 @@ import { ApiError, api, connectLive, type Catalog, type LiveMessage } from './ap
  * without one clobbering the other.
  */
 
-export type Panel = 'validation' | 'spec' | 'settings' | null;
+export type Panel = 'validation' | 'spec' | 'progress' | null;
 
 export interface EditorState {
   connection: 'connecting' | 'open' | 'closed';
