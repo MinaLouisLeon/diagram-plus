@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   DiagramStore,
   exportDiagram,
@@ -26,7 +26,8 @@ Usage
   dgp spec <diagram>      Print the implementation spec as Markdown
   dgp export <diagram>    Print the diagram (--format mermaid|markdown|json)
   dgp validate <diagram>  Report problems with a diagram
-  dgp install-mcp         Register the MCP server in this project's .mcp.json
+  dgp install-mcp         Register the MCP server with your AI tools
+                          (Claude Code, Claude Desktop, Codex, Cursor, ...)
 
 Options
   --port <n>              Port for the editor (default ${DEFAULT_PORT})
@@ -72,17 +73,6 @@ async function resolveRoot(flags: Args['flags']): Promise<string> {
   if (typeof flags['root'] === 'string') return path.resolve(flags['root']);
   if (process.env['DIAGRAM_PLUS_ROOT']) return path.resolve(process.env['DIAGRAM_PLUS_ROOT']);
   return findProjectRoot(process.cwd());
-}
-
-function mcpBinPath(): string {
-  const require = createRequire(import.meta.url);
-  try {
-    const entry = require.resolve('@diagram-plus/mcp');
-    return path.join(path.dirname(entry), 'bin.js');
-  } catch {
-    // Running from a source checkout.
-    return path.resolve(process.cwd(), 'packages/mcp/dist/bin.js');
-  }
 }
 
 async function main(): Promise<void> {
@@ -178,25 +168,12 @@ async function main(): Promise<void> {
     }
 
     case 'install-mcp': {
-      const file = path.join(root, '.mcp.json');
-      let config: Record<string, unknown> = {};
-      try {
-        config = JSON.parse(await fs.readFile(file, 'utf8')) as Record<string, unknown>;
-      } catch {
-        /* first time */
-      }
-      const servers = (config['mcpServers'] as Record<string, unknown>) ?? {};
-      servers['diagram-plus'] = {
-        command: 'node',
-        args: [mcpBinPath()],
-        env: { DIAGRAM_PLUS_ROOT: root },
-      };
-      config['mcpServers'] = servers;
-      await fs.writeFile(file, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
-      process.stdout.write(
-        `Registered the diagram-plus MCP server in ${file}.\n` +
-          `Restart Claude Code, then ask it to design a diagram for your project.\n`,
-      );
+      // The installer is plain JavaScript so it runs before anything is built.
+      const script = path.resolve(fileURLToPath(import.meta.url), '..', '..', 'install-mcp.mjs');
+      const result = spawnSync(process.execPath, [script, ...process.argv.slice(3)], {
+        stdio: 'inherit',
+      });
+      process.exitCode = result.status ?? 1;
       return;
     }
 

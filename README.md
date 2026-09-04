@@ -44,35 +44,64 @@ code they describe.
 git clone https://github.com/MinaLouisLeon/diagram-plus
 cd diagram-plus
 npm install
-npm run build
+npm run install-mcp
 ```
 
-Then, in the project you want to design:
+That last command is an installer that finds every MCP-capable AI tool on your
+machine and configures them all. It asks two questions — where to install, and which
+tools — then writes each one's config in its own format.
+
+```
+  Where should the server be installed?
+
+    1) local   this project only
+    2) global  every project on this machine
+
+  Which tools should get the server?
+
+    1) Claude Code          detected
+    2) Claude Desktop       detected
+    3) Codex CLI            not detected
+    ...
+```
+
+It supports **Claude Code**, **Claude Desktop**, **Codex CLI**, **Cursor**,
+**Windsurf**, **VS Code (Copilot)** and **Gemini CLI**. Existing servers in those
+files are left alone, and anything it changes is backed up first.
+
+If the project has not been built yet, it offers to build it for you.
+
+### Local or global?
+
+|  | What it writes | When to use it |
+|---|---|---|
+| **local** | project files — `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.gemini/settings.json` | You want the diagram tooling committed with the repo, so anyone who clones it gets the server too. The project path is pinned. |
+| **global** | your user config — `~/.claude.json`, `~/.codex/config.toml`, `~/.cursor/mcp.json`, … | You want it everywhere. Terminal tools then pick up the diagrams of whichever project you run them in. |
+
+Desktop apps (Claude Desktop, Cursor, Windsurf, VS Code) have no working directory,
+so on a global install the installer asks which project they should open and pins
+that path in. Terminal tools (Claude Code, Codex, Gemini) get no pinned path, so one
+global install works across all your projects.
+
+### Without the prompts
 
 ```bash
-cd ~/code/my-project
-node /path/to/diagram-plus/packages/server/dist/cli.js init
-node /path/to/diagram-plus/packages/server/dist/cli.js install-mcp
+npm run install-mcp -- --global --yes            # every detected tool
+npm run install-mcp -- --local --project ~/app   # this project only
+npm run install-mcp -- --clients claude-code,codex --global --yes
+npm run install-mcp -- --list                    # what is supported, and where
+npm run install-mcp -- --dry-run --global        # show the changes, write nothing
+npm run install-mcp -- --uninstall --global      # remove it again
 ```
 
-`install-mcp` writes the server into your project's `.mcp.json`:
+`dgp install-mcp` runs the same installer and takes the same flags. Full reference:
+[docs/install.md](docs/install.md).
 
-```json
-{
-  "mcpServers": {
-    "diagram-plus": {
-      "command": "node",
-      "args": ["/path/to/diagram-plus/packages/mcp/dist/bin.js"],
-      "env": { "DIAGRAM_PLUS_ROOT": "/Users/you/code/my-project" }
-    }
-  }
-}
-```
-
-Restart Claude Code so it picks the server up. Then start the editor:
+Once it is done, restart the tool it configured, then start the editor from any
+project:
 
 ```bash
-dgp          # or: node /path/to/diagram-plus/packages/server/dist/cli.js
+dgp
 ```
 
 It prints a URL — usually <http://localhost:4517>.
@@ -162,7 +191,7 @@ dgp list                List the diagrams in this project
 dgp spec <diagram>      Print the implementation spec as Markdown
 dgp export <diagram>    Print the diagram (--format mermaid|markdown|json)
 dgp validate <diagram>  Report problems with a diagram
-dgp install-mcp         Register the MCP server in .mcp.json
+dgp install-mcp         Register the MCP server with your AI tools
 ```
 
 ---
