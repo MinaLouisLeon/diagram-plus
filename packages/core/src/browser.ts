@@ -1,0 +1,21 @@
+/**
+ * Browser-safe entry point.
+ *
+ * Identical to the main entry minus `store.ts`, which reaches for `node:fs`.
+ * The editor imports this so it can share the schema, the catalog, validation,
+ * layout and the spec generator with the server instead of reimplementing them.
+ */
+
+export * from './ids.js';
+export * from './common.js';
+export * from './blocks.js';
+export * from './edges.js';
+export * from './diagram.js';
+export * from './catalog.js';
+export * from './factory.js';
+export * from './operations.js';
+export * from './validate.js';
+export * from './layout.js';
+export * from './analysis.js';
+export * from './spec.js';
+export * from './export.js';

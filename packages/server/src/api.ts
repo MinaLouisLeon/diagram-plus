@@ -13,6 +13,7 @@ import {
   diagramStats,
   exportDiagram,
   generateSpec,
+  safeParseDiagram,
   validateDiagram,
   type BatchOperation,
   type Diagram,
@@ -118,6 +119,39 @@ export function createApiRouter(options: ApiOptions): Router {
     } catch (err) {
       return wrapStoreError(err);
     }
+  });
+
+  // Whole-document replace. The editor uses it for undo/redo, where sending a
+  // reverse operation list would be far more fragile than sending the state.
+  router.put('/api/diagrams/:slug', async (ctx) => {
+    const body = (await ctx.body()) as Record<string, unknown>;
+    const incoming = body['diagram'];
+    if (!incoming || typeof incoming !== 'object') {
+      throw new HttpError(400, 'Expected a "diagram" object.');
+    }
+    const parsed = safeParseDiagram(incoming);
+    if (!parsed.success) {
+      throw new HttpError(400, `Diagram is not valid: ${parsed.error.issues[0]?.message ?? 'unknown error'}`);
+    }
+    const next = parsed.data;
+    return {
+      diagram: await write(
+        ctx.params['slug']!,
+        (draft) => {
+          draft.blocks = next.blocks;
+          draft.edges = next.edges;
+          draft.groups = next.groups;
+          draft.canvas = next.canvas;
+          draft.name = next.name;
+          draft.description = next.description;
+          draft.projectGoal = next.projectGoal;
+          draft.techStack = next.techStack;
+          draft.notes = next.notes;
+          draft.status = next.status;
+        },
+        revisionOf(body['expectedRevision']),
+      ),
+    };
   });
 
   router.patch('/api/diagrams/:slug', async (ctx) => {
