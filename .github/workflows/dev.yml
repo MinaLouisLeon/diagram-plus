@@ -1,0 +1,49 @@
+name: dev — test build
+
+# Anything merged into dev produces installers to try out. No release and no
+# tag: the bundles are build artifacts on the run, kept for two weeks.
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      artifact-prefix: dev-${{ github.sha }}
+
+  summary:
+    name: Where to get the build
+    needs: build
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Write the run summary
+        run: |
+          {
+            echo "### Test build ready"
+            echo
+            echo "Commit \`${GITHUB_SHA::7}\` on \`${GITHUB_REF_NAME}\`."
+            echo
+            echo "Download from the **Artifacts** section at the bottom of"
+            echo "[this run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}):"
+            echo
+            echo "| Platform | Artifact |"
+            echo "| --- | --- |"
+            echo "| Windows | \`dev-${GITHUB_SHA}-windows-x64\` — .exe and .msi |"
+            echo "| macOS (Apple silicon) | \`dev-${GITHUB_SHA}-macos-arm64\` — .dmg |"
+            echo "| macOS (Intel) | \`dev-${GITHUB_SHA}-macos-x64\` — .dmg |"
+            echo "| Linux | \`dev-${GITHUB_SHA}-linux-x64-deb\` — .deb |"
+            echo
+            echo "The builds are unsigned: Windows needs *More info → Run anyway*,"
+            echo "macOS needs right-click → Open."
+          } >> "$GITHUB_STEP_SUMMARY"

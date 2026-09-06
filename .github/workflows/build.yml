@@ -1,0 +1,172 @@
+name: Build desktop app
+
+# The one place the app is actually compiled. The dev, staging and main
+# pipelines all call this, so a nightly and a release are built by exactly the
+# same steps as a test build — only what happens to the output differs.
+#
+# A Tauri bundle cannot be cross-compiled, so every platform builds on its own
+# runner: Windows for .exe/.msi, macOS for .dmg, Linux for .deb.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version to stamp into the bundles. Empty keeps the one in the repo.
+        type: string
+        default: ''
+      release-tag:
+        description: Upload to this release instead of keeping artifacts. Empty means artifacts only.
+        type: string
+        default: ''
+      release-name:
+        type: string
+        default: ''
+      release-body:
+        type: string
+        default: ''
+      prerelease:
+        type: boolean
+        default: false
+      artifact-prefix:
+        description: Prefix for the uploaded artifact names.
+        type: string
+        default: build
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Repair rollup native binary
+        # npm/cli#4828 can leave the platform binary out of the tree.
+        run: npm ls @rollup/rollup-linux-x64-gnu >/dev/null 2>&1 || npm install --no-save --no-package-lock @rollup/rollup-linux-x64-gnu
+
+      - name: Build libraries
+        run: npm run build:libs
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+  build:
+    name: ${{ matrix.name }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: windows-x64
+            bundles: nsis,msi
+            rollup: '@rollup/rollup-win32-x64-msvc'
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            name: macos-arm64
+            bundles: dmg
+            rollup: '@rollup/rollup-darwin-arm64'
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            name: macos-x64
+            bundles: dmg
+            rollup: '@rollup/rollup-darwin-x64'
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            name: linux-x64-deb
+            bundles: deb
+            rollup: '@rollup/rollup-linux-x64-gnu'
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # WebKitGTK is what Tauri renders with on Linux; the other runners have
+      # their system webview already.
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            file \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: packages/desktop/src-tauri -> target
+          key: ${{ matrix.target }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Repair rollup native binary
+        shell: bash
+        run: npm ls ${{ matrix.rollup }} >/dev/null 2>&1 || npm install --no-save --no-package-lock ${{ matrix.rollup }}
+
+      # The version lives in the tag, not in a commit — see release.yml. Each
+      # runner stamps it in just before building, and never commits the change.
+      - name: Stamp version ${{ inputs.version }}
+        if: inputs.version != ''
+        shell: bash
+        run: node packages/desktop/set-version.mjs "${{ inputs.version }}"
+
+      - name: Build libraries
+        run: npm run build:libs
+
+      - name: Bundle the MCP server
+        run: npm run bundle-mcp -w @diagram-plus/desktop
+
+      - name: Build the app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: packages/desktop
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          tagName: ${{ inputs.release-tag }}
+          releaseName: ${{ inputs.release-name }}
+          releaseBody: ${{ inputs.release-body }}
+          prerelease: ${{ inputs.prerelease }}
+          # Every runner uploads into the same draft; release.yml publishes it
+          # once they have all finished, so nobody downloads a half-filled one.
+          releaseDraft: true
+
+      - name: Upload artifacts
+        if: inputs.release-tag == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            packages/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+            packages/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            packages/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            packages/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb

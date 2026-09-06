@@ -1,0 +1,115 @@
+name: staging — nightly release
+
+# Merging dev into staging publishes a nightly: a real, downloadable
+# prerelease, tagged by date so several in one day do not collide.
+#
+# Only dev may be merged here — see merge-guard.yml, and the branch protection
+# that requires it to pass.
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  name-it:
+    name: Work out the tag
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+      title: ${{ steps.tag.outputs.title }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compose the nightly tag
+        id: tag
+        run: |
+          set -euo pipefail
+          stamp=$(date -u +'%Y%m%d-%H%M')
+          short=${GITHUB_SHA::7}
+          tag="nightly-${stamp}"
+
+          # The version the installers carry. Nightlies sit above the last
+          # release so an upgrade from a release is never a downgrade.
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+          base=${latest#v}
+          if [ -z "$base" ]; then base="0.1.0"; fi
+          major=$(echo "$base" | cut -d. -f1)
+          minor=$(echo "$base" | cut -d. -f2)
+          patch=$(echo "$base" | cut -d. -f3)
+          version="${major}.${minor}.$((patch + 1))"
+
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "title=Nightly ${stamp} (${short})" >> "$GITHUB_OUTPUT"
+          echo "Nightly ${tag}, version ${version}, from ${short}"
+
+  build:
+    needs: name-it
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.name-it.outputs.version }}
+      release-tag: ${{ needs.name-it.outputs.tag }}
+      release-name: ${{ needs.name-it.outputs.title }}
+      prerelease: true
+      release-body: |
+        An automated build of `staging`. Not a stable release — expect rough edges.
+
+        | Platform | File |
+        | --- | --- |
+        | Windows | `.exe` installer, or `.msi` |
+        | macOS (Apple silicon) | `_aarch64.dmg` |
+        | macOS (Intel) | `_x64.dmg` |
+        | Linux (Debian/Ubuntu) | `.deb` |
+
+        Unsigned, so the first launch needs one confirmation: on Windows
+        *More info → Run anyway*; on macOS right-click the app and choose *Open*.
+
+  publish:
+    name: Publish the nightly
+    needs: [name-it, build]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Every runner uploaded into the same draft; it only becomes visible once
+      # all four have finished, so nobody grabs a half-filled release.
+      - name: Undraft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ needs.name-it.outputs.tag }}" --draft=false --prerelease
+
+      - name: Prune old nightlies
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Keep the ten most recent; delete the tag with the release so the
+          # list does not fill up with dead refs.
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("nightly-"))]
+                  | sort_by(.createdAt) | reverse | .[10:] | .[].tagName' \
+            > stale.txt
+          while read -r tag; do
+            [ -n "$tag" ] || continue
+            echo "Removing $tag"
+            gh release delete "$tag" --cleanup-tag --yes
+          done < stale.txt
+
+      - name: Summarise
+        run: |
+          {
+            echo "### Nightly published"
+            echo
+            echo "**${{ needs.name-it.outputs.title }}** — version ${{ needs.name-it.outputs.version }}"
+            echo
+            echo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${{ needs.name-it.outputs.tag }}"
+          } >> "$GITHUB_STEP_SUMMARY"

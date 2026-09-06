@@ -1,0 +1,66 @@
+name: Merge guard
+
+# GitHub's branch protection can require a pull request, but it cannot say
+# where that pull request is allowed to come from. This does:
+#
+#   staging  accepts only  dev
+#   main     accepts only  staging
+#
+# Branch protection on those two branches requires this check to pass, which is
+# what actually makes the rule bite — on its own a failing check only turns the
+# PR red.
+
+on:
+  pull_request:
+    branches: [staging, main]
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  check-source:
+    name: Check the source branch
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Only the branch below may merge here
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+
+          case "$BASE" in
+            staging) allowed=dev ;;
+            main)    allowed=staging ;;
+            *)
+              echo "No rule for '$BASE' — nothing to check."
+              exit 0
+              ;;
+          esac
+
+          if [ "$HEAD" = "$allowed" ]; then
+            echo "'$HEAD' → '$BASE' is allowed."
+            exit 0
+          fi
+
+          {
+            echo "### Wrong source branch"
+            echo
+            echo "This pull request goes **\`$HEAD\` → \`$BASE\`**, but \`$BASE\` only accepts \`$allowed\`."
+            echo
+            echo "The release path is:"
+            echo
+            echo '```'
+            echo 'any branch  →  dev  →  staging  →  main'
+            echo '```'
+            echo
+            if [ "$BASE" = "main" ]; then
+              echo "Merge your work into \`dev\`, then \`dev\` into \`staging\`, then open this against \`main\` from \`staging\`."
+            else
+              echo "Merge your work into \`dev\` first, then open this pull request from \`dev\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::error title=Wrong source branch::'$BASE' only accepts '$allowed', but this pull request is from '$HEAD'."
+          exit 1

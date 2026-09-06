@@ -1,0 +1,137 @@
+name: main — release
+
+# Merging staging into main cuts a release: a new version, a new tag, and
+# installers for every platform.
+#
+# Only staging may be merged here — see merge-guard.yml.
+#
+# Where the version comes from
+# ----------------------------
+# The tags are the record, not a file. On each release the patch number of the
+# latest `v*` tag is incremented — so merges to main need no version edit and
+# nothing is ever committed back to this protected branch.
+#
+# To release a minor or major version instead, set `version` in
+# packages/desktop/src-tauri/tauri.conf.json to the number you want before the
+# merge. Anything higher than the latest tag is taken as deliberate and used
+# as-is; anything lower or equal is ignored in favour of the patch bump.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact version to release (leave empty to bump the patch)
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    name: Decide the version
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pick the version
+        id: pick
+        run: |
+          set -euo pipefail
+
+          asked="${{ inputs.version }}"
+          file=$(node -p "require('./packages/desktop/src-tauri/tauri.conf.json').version")
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+
+          # Sorts two semvers and reports whether $1 is strictly greater.
+          higher() {
+            [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ]
+          }
+
+          if [ -n "$asked" ]; then
+            version="${asked#v}"
+            echo "Using the version given to this run: $version"
+          elif [ -z "$latest" ]; then
+            version="$file"
+            echo "No release tags yet — starting from tauri.conf.json: $version"
+          else
+            base="${latest#v}"
+            major=$(echo "$base" | cut -d. -f1)
+            minor=$(echo "$base" | cut -d. -f2)
+            patch=$(echo "$base" | cut -d. -f3)
+            bumped="${major}.${minor}.$((patch + 1))"
+
+            if higher "$file" "$base"; then
+              version="$file"
+              echo "tauri.conf.json asks for $version, above the last tag $base — honouring it."
+            else
+              version="$bumped"
+              echo "Last tag $base — bumping the patch to $version."
+            fi
+          fi
+
+          tag="v${version}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "::error::Tag $tag already exists. Set a version explicitly, or bump tauri.conf.json."
+            exit 1
+          fi
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      release-tag: ${{ needs.version.outputs.tag }}
+      release-name: diagram-plus ${{ needs.version.outputs.version }}
+      prerelease: false
+      release-body: |
+        Download the installer for your platform below.
+
+        | Platform | File |
+        | --- | --- |
+        | Windows | `.exe` installer, or `.msi` |
+        | macOS (Apple silicon) | `_aarch64.dmg` |
+        | macOS (Intel) | `_x64.dmg` |
+        | Linux (Debian/Ubuntu) | `.deb` |
+
+        The builds are unsigned, so the first launch needs one confirmation:
+        on Windows choose *More info → Run anyway*; on macOS right-click the
+        app and choose *Open*.
+
+        The app carries its own MCP server — open the gear in the toolbar to
+        register it with Claude Code and the other AI tools on your machine.
+        That server needs Node 20 or newer installed.
+
+  publish:
+    name: Publish the release
+    needs: [version, build]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # The draft only becomes a release once every platform has uploaded,
+      # so nobody can download a release that is missing their installer.
+      - name: Undraft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ needs.version.outputs.tag }}" --draft=false --latest
+
+      - name: Summarise
+        run: |
+          {
+            echo "### Released ${{ needs.version.outputs.tag }}"
+            echo
+            echo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${{ needs.version.outputs.tag }}"
+          } >> "$GITHUB_STEP_SUMMARY"
