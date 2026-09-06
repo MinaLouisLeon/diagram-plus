@@ -106,6 +106,20 @@ gh api repos/:owner/:repo/branches/staging/protection
 
 ---
 
+## This repository's own diagrams
+
+`.diagrams/` is git-ignored here, and is not on any branch.
+
+That is the opposite of the advice diagram-plus gives its users, and
+deliberately so. A diagram is a specification of the app around it, which is
+why it belongs in the repository it describes. The diagrams in *this* checkout
+describe nothing: they are scratch, whatever the editor and the MCP server
+happen to be pointed at while the tool itself is being worked on.
+
+The example that is meant to be read lives in `examples/`.
+
+---
+
 ## Signing
 
 The installers are unsigned, so the first launch needs one confirmation:
