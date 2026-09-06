@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import {
   applyBatch,
   autoLayout,
+  buildProjectTree,
   bundleFileName,
   createBundle,
   diagramFileName,
@@ -9,6 +10,8 @@ import {
   planImport,
   serializeBundle,
   serializeDiagramFile,
+  treeToMarkdown,
+  treeToText,
   validateDiagram,
   type BatchOperation,
   type BatchResult,
@@ -16,6 +19,8 @@ import {
   type DiagramStatus,
   type DiagramSummary,
   type ImportCandidate,
+  type TreeFilter,
+  type TreeOptions,
   type ValidationResult,
 } from '@diagram-plus/core/browser';
 import { api, connectLive, type Catalog, type LiveMessage } from './api';
@@ -36,7 +41,7 @@ import { unsavedPrompt, type UnsavedReason } from './unsaved';
  * rather than merged underneath them; the save then wins.
  */
 
-export type Panel = 'validation' | 'spec' | 'progress' | null;
+export type Panel = 'validation' | 'spec' | 'progress' | 'tree' | null;
 
 export interface EditorState {
   connection: 'connecting' | 'open' | 'closed';
@@ -48,6 +53,10 @@ export interface EditorState {
   selectedBlocks: string[];
   selectedEdges: string[];
   panel: Panel;
+  /** How the client view is built. Lives here so presenting keeps the settings. */
+  treeOptions: TreeOptions;
+  /** True while the client view is filling the window for a review. */
+  presenting: boolean;
   /** True while a save is in flight. */
   saving: boolean;
   /** True when the local copy has edits that are not on disk. */
@@ -82,6 +91,8 @@ class EditorStore {
     selectedBlocks: [],
     selectedEdges: [],
     panel: null,
+    treeOptions: {},
+    presenting: false,
     saving: false,
     dirty: false,
     error: null,
@@ -594,6 +605,41 @@ class EditorStore {
 
   setPanel(panel: Panel): void {
     this.set({ panel: this.state.panel === panel ? null : panel });
+  }
+
+  /* ---- the client view -------------------------------------------------- */
+
+  setTreeOptions(patch: Partial<TreeOptions>): void {
+    this.set({ treeOptions: { ...this.state.treeOptions, ...patch } });
+  }
+
+  setTreeFilter(patch: Partial<TreeFilter>): void {
+    const filter = { ...this.state.treeOptions.filter, ...patch };
+    // An empty value means "no longer filtering on this", not "match nothing".
+    for (const [key, value] of Object.entries(filter)) {
+      const empty = value === undefined || value === '' || (Array.isArray(value) && !value.length);
+      if (empty) delete (filter as Record<string, unknown>)[key];
+    }
+    this.setTreeOptions({ filter });
+  }
+
+  /** Fill the window with the tree — the state to be in on a call with a client. */
+  present(on: boolean): void {
+    this.set({ presenting: on, panel: on ? null : this.state.panel });
+  }
+
+  async exportTree(format: 'tree' | 'tree-markdown'): Promise<void> {
+    const current = this.state.current;
+    if (!current) return;
+    try {
+      const tree = buildProjectTree(current, this.state.treeOptions);
+      const contents = format === 'tree-markdown' ? treeToMarkdown(tree) : treeToText(tree);
+      const name = `${current.slug}-client-view.${format === 'tree-markdown' ? 'md' : 'txt'}`;
+      const path = await saveFile(name, contents);
+      if (path) this.set({ notice: `Wrote the client view to ${path}.`, error: null });
+    } catch (err) {
+      this.set({ error: describe(err) });
+    }
   }
 
   /** Put a message in the notice strip — for failures with no other home. */

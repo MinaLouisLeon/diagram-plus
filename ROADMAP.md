@@ -22,7 +22,7 @@
 ```
 ┌──────────────┐         ┌──────────────────────────┐         ┌──────────────┐
 │  Claude Code │──stdio──│  @diagram-plus/mcp       │────┐    │   Browser    │
-└──────────────┘         │  (MCP server, 22 tools)  │    │    │  editor UI   │
+└──────────────┘         │  (MCP server, 27 tools)  │    │    │  editor UI   │
                          └──────────────────────────┘    │    └──────┬───────┘
                                                           ▼           │ HTTP+WS
                                         ┌──────────────────────────┐  │
@@ -45,7 +45,7 @@ edits the diagram.
 
 | Package | Purpose |
 |---|---|
-| `@diagram-plus/core` | Diagram schema (zod), typed block catalog, validation, file store, layout, spec generator, exporters |
+| `@diagram-plus/core` | Diagram schema (zod), typed block catalog, validation, file store, layout, spec generator, project tree, exporters |
 | `@diagram-plus/server` | Local HTTP REST + WebSocket server, file watcher, static hosting, `dgp` CLI |
 | `@diagram-plus/mcp` | stdio MCP server exposing the diagram as tools/resources/prompts |
 | `@diagram-plus/web` | React + xyflow drag-and-drop editor |
@@ -136,6 +136,23 @@ edits the diagram.
 - [x] `dgp export --out/--all`, `dgp import`, and the `import_diagram` MCP tool —
       none of which overwrite anything unless explicitly told to
 
+### Phase 9 — Explaining a diagram to someone who did not draw it
+- [x] `buildProjectTree` — the graph read as a tree of what the application does:
+      entry screens first, technical blocks folded away, cycles cut with a pointer
+      back to the first sighting
+- [x] Conditions as branches — `decision` blocks matched to their `conditional`
+      edges, `error_flow` paths labelled, all in the words already on the blocks
+- [x] Conditions as filters — type, group, tag, implementation status and free text.
+      A filtered block still conducts the flow, and what was removed is counted
+      rather than quietly dropped
+- [x] Three renderers: indented text, Markdown, and a Mermaid flowchart of the tree
+      (a fraction of the size of the whole-diagram one)
+- [x] **Client view** panel in the editor, with a client/technical toggle and the
+      filters live; every row clicks back to its block on the canvas
+- [x] **Present** — full-screen, large type, collapsible, `Esc` to leave
+- [x] `read_project_tree` MCP tool, `tree`/`tree-markdown` export formats,
+      `GET /api/diagrams/:slug/tree`, and `dgp tree`
+
 ---
 
 ## Progress
@@ -151,9 +168,10 @@ edits the diagram.
 | 6 — Implementation bridge | ✅ done | status gating, per-block progress, build-order panel |
 | 7 — Tests + docs | ✅ done | 143 tests, README, generated block reference, MCP reference |
 | 8 — Sharing | ✅ done | `core/transfer.ts`, import dialog, `dgp import`, `import_diagram` |
+| 9 — Explaining | ✅ done | `core/tree.ts`, `core/tree-render.ts`, Client view panel, Present mode, `read_project_tree` |
 
-**Everything in this roadmap is built.** `npm test` runs 143 tests across the three
+**Everything in this roadmap is built.** `npm test` runs 173 tests across the three
 non-UI packages, including an end-to-end pass over the whole loop and over the
 export/import round trip; the editor was driven in a real browser to confirm the
-canvas, the inspector, live sync, the progress panel and the import dialog all
-work.
+canvas, the inspector, live sync, the progress panel, the import dialog and the
+client view all work.

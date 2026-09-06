@@ -10,6 +10,7 @@ import {
   applyBatch,
   autoLayout,
   buildOrder,
+  buildProjectTree,
   deleteBlocks,
   deleteEdges,
   describeSchemaError,
@@ -23,11 +24,15 @@ import {
   parseTransfer,
   planImport,
   moveBlocks,
+  treeToMarkdown,
+  treeToText,
   updateBlock,
   updateEdge,
   validateDiagram,
   type BatchOperation,
   type Diagram,
+  type TreeFilter,
+  type TreeOptions,
 } from '@diagram-plus/core';
 import {
   allBlockTypesHint,
@@ -359,7 +364,13 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       description: 'Export a diagram as a Mermaid flowchart, a Markdown document, or raw JSON.',
       inputSchema: {
         diagram: diagramRef,
-        format: z.enum(['mermaid', 'markdown', 'json']).optional().describe('Defaults to mermaid.'),
+        format: z
+          .enum(['mermaid', 'markdown', 'json', 'tree', 'tree-markdown'])
+          .optional()
+          .describe(
+            'Defaults to mermaid. "tree" and "tree-markdown" render the client view — ' +
+              'see read_project_tree for the options that shape it.',
+          ),
       },
       annotations: { readOnlyHint: true },
     },
@@ -367,6 +378,90 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       withDiagram(diagram, (d) =>
         text(block(`"${d.name}" as ${format}:`, exportDiagram(d, format), format === 'json' ? 'json' : format)),
       ),
+  );
+
+  /**
+   * The client view.
+   *
+   * The full diagram is the wrong thing to put in front of someone who did not
+   * draw it, and `read_implementation_spec` is far too much. This is the same
+   * file read as a tree of what a person can do, with endpoints, services and
+   * tables folded away and the decisions turned into readable branches.
+   */
+  server.registerTool(
+    'read_project_tree',
+    {
+      title: 'Read the diagram as a project tree',
+      description:
+        'Turn a diagram into a plain tree of what the application does — screens, the actions ' +
+        'on them, and the conditions that decide what happens next — with the technical blocks ' +
+        'folded away. Use it when the user wants to explain or review the design with someone ' +
+        'non-technical, rather than build from it.',
+      inputSchema: {
+        diagram: diagramRef,
+        audience: z
+          .enum(['client', 'technical'])
+          .optional()
+          .describe(
+            'client (default) folds endpoints, services and data models away; ' +
+              'technical keeps every block.',
+          ),
+        format: z
+          .enum(['text', 'markdown'])
+          .optional()
+          .describe('Defaults to text — an indented tree. markdown gives headings and bullets.'),
+        showConditions: z
+          .boolean()
+          .optional()
+          .describe('Turn decisions and conditional connections into branches. Default true.'),
+        showData: z.boolean().optional().describe('Include data models and datastores. Default false.'),
+        maxDepth: z.number().int().positive().optional().describe('How deep to follow a flow. Default 8.'),
+        roots: z
+          .enum(['auto', 'flat', 'groups'])
+          .optional()
+          .describe('groups buckets the top level by group; auto (default) does that only if groups exist.'),
+        types: z
+          .array(blockTypeEnum)
+          .optional()
+          .describe('Only let these block types appear. Everything else still conducts the flow.'),
+        groups: z.array(z.string()).optional().describe('Only blocks in these groups, by id or name.'),
+        tags: z.array(z.string()).optional().describe('Only blocks carrying one of these tags.'),
+        status: z
+          .array(z.enum(['todo', 'in_progress', 'done', 'blocked']))
+          .optional()
+          .describe('Only blocks in these implementation states.'),
+        search: z.string().optional().describe('Only blocks whose name, summary or description matches.'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ diagram, format = 'text', types, groups, tags, status, search, ...rest }) =>
+      withDiagram(diagram, (d) => {
+        const filter: TreeFilter = {};
+        if (types?.length) filter.types = types;
+        if (groups?.length) filter.groups = groups;
+        if (tags?.length) filter.tags = tags;
+        if (status?.length) filter.status = status;
+        if (search) filter.search = search;
+
+        const options: TreeOptions = { ...rest };
+        if (Object.keys(filter).length) options.filter = filter;
+
+        const tree = buildProjectTree(d, options);
+        const body = format === 'markdown' ? treeToMarkdown(tree) : treeToText(tree);
+        return text(
+          [
+            `"${d.name}" as a project tree (${tree.nodeCount} steps, ${tree.audience} view):`,
+            '',
+            body,
+            tree.omitted.length
+              ? `${tree.omitted.length} block(s) were left out by the filter.`
+              : '',
+            `Show it to the user at ${editorUrl}/d/${d.slug} — the Client view button opens the same tree.`,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        );
+      }),
   );
 
   /* ================================================================ *

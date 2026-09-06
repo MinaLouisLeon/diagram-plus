@@ -10,11 +10,14 @@ import {
   findProjectRoot,
   generateSpec,
   importDiagram,
+  isExportFormat,
   parseTransfer,
+  parseTreeOptions,
   planImport,
   serializeBundle,
   validateDiagram,
   type Diagram,
+  type ExportFormat,
 } from '@diagram-plus/core';
 import { startServer, DEFAULT_PORT } from './server.js';
 
@@ -31,7 +34,10 @@ Usage
   dgp init                Create the .diagrams directory in this project
   dgp list                List the diagrams in this project
   dgp spec <diagram>      Print the implementation spec as Markdown
-  dgp export <diagram>    Print the diagram (--format mermaid|markdown|json)
+  dgp export <diagram>    Print the diagram
+                          (--format mermaid|markdown|json|tree|tree-markdown)
+  dgp tree <diagram>      Print the client view: a plain tree of what the app
+                          does, with the plumbing folded away
   dgp import <file>...    Bring in diagrams exported from another project
   dgp validate <diagram>  Report problems with a diagram
   dgp install-mcp         Register the MCP server with your AI tools
@@ -43,6 +49,19 @@ Options
   --root <path>           Project root holding .diagrams (default: nearest project)
   --format <f>            Export format for \`export\` (default mermaid,
                           or json when --out is given)
+
+Options for \`tree\` (and for --format tree / tree-markdown)
+  --audience <a>          client (default) hides endpoints, services and
+                          tables; technical keeps every block
+  --markdown              Write the tree as Markdown rather than plain text
+  --depth <n>             How deep to follow a flow (default 8)
+  --no-conditions         Leave out decisions and conditional branches
+  --data                  Include data models and datastores
+  --types <t,...>         Only these block types
+  --groups <g,...>        Only blocks in these groups
+  --tags <t,...>          Only blocks carrying one of these tags
+  --status <s,...>        Only blocks in these implementation states
+  --search <text>         Only blocks whose name or summary matches
   --out <path>            Write \`export\` to a file rather than stdout
   --all                   Export every diagram in the project as one bundle
   --replace, --copy       What \`import\` does with a diagram already here.
@@ -80,6 +99,19 @@ function parseArgs(argv: string[]): Args {
 
   const command = positional.shift() ?? 'open';
   return { command, positional, flags };
+}
+
+/**
+ * Flags into tree options. `--no-conditions` is spelled the way a shell user
+ * expects, so it is translated rather than passed straight through.
+ */
+function treeOptionsFrom(args: Args) {
+  return parseTreeOptions((key) => {
+    if (key === 'conditions' && args.flags['no-conditions']) return 'false';
+    const value = args.flags[key];
+    if (value === undefined) return undefined;
+    return typeof value === 'string' ? value : 'true';
+  });
 }
 
 async function resolveRoot(flags: Args['flags']): Promise<string> {
@@ -152,6 +184,26 @@ async function main(): Promise<void> {
       return;
     }
 
+    /**
+     * The client view. `export --format tree` reaches the same renderer, but
+     * this is the name someone reaches for when the diagram has to go in front
+     * of a person who did not draw it.
+     */
+    case 'tree': {
+      const ref = requireArg(args, 'tree <diagram>');
+      const format: ExportFormat = args.flags['markdown'] ? 'tree-markdown' : 'tree';
+      const contents = exportDiagram(await store.read(ref), format, treeOptionsFrom(args));
+      const out = typeof args.flags['out'] === 'string' ? args.flags['out'] : null;
+      if (!out) {
+        process.stdout.write(contents);
+        return;
+      }
+      await writeFile(out, contents, 'utf8');
+      process.stdout.write(`Wrote the client view of ${ref} to ${path.resolve(out)}
+`);
+      return;
+    }
+
     case 'export': {
       const out = typeof args.flags['out'] === 'string' ? args.flags['out'] : null;
 
@@ -178,14 +230,13 @@ async function main(): Promise<void> {
       // Writing to a file usually means sending it somewhere, and JSON is the
       // only one of the three that can be imported again.
       const fallback = out ? 'json' : 'mermaid';
-      const format = (typeof args.flags['format'] === 'string' ? args.flags['format'] : fallback) as
-        | 'mermaid'
-        | 'markdown'
-        | 'json';
-      if (!['mermaid', 'markdown', 'json'].includes(format)) {
-        throw new Error(`Unknown format "${format}". Use mermaid, markdown or json.`);
+      const format = typeof args.flags['format'] === 'string' ? args.flags['format'] : fallback;
+      if (!isExportFormat(format)) {
+        throw new Error(
+          `Unknown format "${format}". Use mermaid, markdown, json, tree or tree-markdown.`,
+        );
       }
-      const contents = exportDiagram(await store.read(ref), format);
+      const contents = exportDiagram(await store.read(ref), format, treeOptionsFrom(args));
       if (!out) {
         process.stdout.write(contents);
         return;

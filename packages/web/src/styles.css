@@ -652,3 +652,93 @@ pre.spec {
 @media (max-width: 720px) {
   .import-sides { grid-template-columns: 1fr; }
 }
+
+/* ---------- client view ---------- */
+
+/*
+ * The tree stands in for the canvas when the diagram has to be explained
+ * rather than edited, so it is typographic rather than graphical: indentation
+ * carries the structure and colour is reserved for the few kinds of row whose
+ * difference actually matters to a reader.
+ */
+
+.panel-header.wrap { flex-wrap: wrap; row-gap: 6px; }
+
+.seg { display: flex; }
+.seg .btn { border-radius: 0; }
+.seg .btn:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.seg .btn:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; margin-left: -1px; }
+
+.check {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--text-muted); white-space: nowrap;
+}
+.check input[type='checkbox'] { width: 14px; height: 14px; accent-color: var(--accent-strong); }
+
+.panel-header input,
+.panel-header select,
+.present header input,
+.present header select {
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 3px 7px; font-size: 12px; font-family: inherit;
+}
+.panel-header input:focus,
+.panel-header select:focus,
+.present header input:focus,
+.present header select:focus { outline: none; border-color: var(--accent); }
+
+.tree { font-size: 13px; }
+
+.tree-row {
+  display: flex; align-items: baseline; gap: 7px;
+  padding: 3px 8px 3px 0; border-radius: var(--radius-sm); cursor: pointer;
+}
+.tree-row:hover { background: var(--bg-input); }
+
+.tree-twist { flex: none; width: 12px; color: var(--text-dim); font-size: 10px; }
+.tree-twist.leaf { opacity: 0.4; }
+
+.tree-text { min-width: 0; }
+.tree-label { overflow-wrap: anywhere; }
+.tree-text em {
+  font-style: normal; color: var(--text-dim); font-size: 11.5px;
+  display: block; overflow-wrap: anywhere;
+}
+
+.tree-kind {
+  margin-left: auto; flex: none; font-size: 10px; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--text-dim); opacity: 0;
+}
+.tree-row:hover .tree-kind { opacity: 1; }
+
+/* The rows a reader needs to tell apart at a glance, and no others. */
+.tree-row.screen .tree-label { font-weight: 600; }
+.tree-row.section .tree-label { font-weight: 650; color: var(--accent); }
+.tree-row.question .tree-label { color: var(--warning); }
+.tree-row.branch .tree-label,
+.tree-row.integration .tree-label { color: var(--text-muted); }
+.tree-row.repeat .tree-label { color: var(--text-dim); font-style: italic; }
+
+.tree-footnote { margin: 14px 0 0; font-size: 11.5px; color: var(--text-dim); }
+
+/* ---------- presentation mode ---------- */
+
+.present {
+  position: fixed; inset: 0; z-index: 45; background: var(--bg);
+  display: flex; flex-direction: column;
+}
+.present header {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 6px;
+  padding: 16px 26px; border-bottom: 1px solid var(--border);
+}
+.present header h1 { margin: 0; font-size: 20px; }
+.present header p { margin: 3px 0 0; color: var(--text-muted); font-size: 13px; max-width: 62ch; }
+
+.present-body { overflow: auto; padding: 26px 30px 60px; }
+.present-body .tree { max-width: 1100px; }
+
+.tree.large { font-size: 16px; line-height: 1.45; }
+.tree.large .tree-row { padding: 6px 10px 6px 0; }
+.tree.large .tree-text em { font-size: 13.5px; }
+.tree.large .tree-twist { width: 16px; font-size: 12px; }
