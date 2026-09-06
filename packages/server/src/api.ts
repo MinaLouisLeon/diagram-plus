@@ -7,12 +7,14 @@ import {
   EDGE_TYPES,
   RevisionConflictError,
   applyBatch,
+  assignDiagramContent,
   autoLayout,
   buildOrder,
   catalogList,
   diagramStats,
   exportDiagram,
   generateSpec,
+  importDiagram,
   safeParseDiagram,
   validateDiagram,
   type BatchOperation,
@@ -137,18 +139,7 @@ export function createApiRouter(options: ApiOptions): Router {
     return {
       diagram: await write(
         ctx.params['slug']!,
-        (draft) => {
-          draft.blocks = next.blocks;
-          draft.edges = next.edges;
-          draft.groups = next.groups;
-          draft.canvas = next.canvas;
-          draft.name = next.name;
-          draft.description = next.description;
-          draft.projectGoal = next.projectGoal;
-          draft.techStack = next.techStack;
-          draft.notes = next.notes;
-          draft.status = next.status;
-        },
+        (draft) => assignDiagramContent(draft, next),
         revisionOf(body['expectedRevision']),
       ),
     };
@@ -227,6 +218,45 @@ export function createApiRouter(options: ApiOptions): Router {
         autoLayout(draft, { direction });
       }),
     };
+  });
+
+  /* ---- transfer ------------------------------------------------------ */
+
+  /**
+   * Bring in a diagram that came from another project.
+   *
+   * The file is read and the collision worked out on the client, where the
+   * user is looking at the dialog; by the time it arrives here the decision has
+   * been made and this only has to carry it out. `action` is required rather
+   * than defaulted, so an import can never overwrite a diagram by omission.
+   */
+  router.post('/api/diagrams/import', async (ctx) => {
+    const body = (await ctx.body()) as Record<string, unknown>;
+    const action = body['action'];
+    if (action !== 'replace' && action !== 'copy') {
+      throw new HttpError(400, 'Expected "action" to be "replace" or "copy".');
+    }
+
+    const parsed = safeParseDiagram(body['diagram']);
+    if (!parsed.success) {
+      throw new HttpError(
+        400,
+        `That is not a diagram: ${parsed.error.issues[0]?.message ?? 'unknown error'}`,
+      );
+    }
+
+    const target = typeof body['target'] === 'string' ? body['target'] : undefined;
+    if (action === 'replace' && !target) {
+      throw new HttpError(400, 'Replacing needs a "target" diagram.');
+    }
+
+    try {
+      const outcome = await importDiagram(store, { incoming: parsed.data, action, target });
+      onChange?.(outcome.diagram);
+      return { diagram: outcome.diagram, action: outcome.action, replaced: outcome.replaced };
+    } catch (err) {
+      return wrapStoreError(err);
+    }
   });
 
   /* ---- derived views ------------------------------------------------ */

@@ -1,13 +1,20 @@
 #!/usr/bin/env node
 import path from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   DiagramStore,
+  createBundle,
   exportDiagram,
   findProjectRoot,
   generateSpec,
+  importDiagram,
+  parseTransfer,
+  planImport,
+  serializeBundle,
   validateDiagram,
+  type Diagram,
 } from '@diagram-plus/core';
 import { startServer, DEFAULT_PORT } from './server.js';
 
@@ -25,6 +32,7 @@ Usage
   dgp list                List the diagrams in this project
   dgp spec <diagram>      Print the implementation spec as Markdown
   dgp export <diagram>    Print the diagram (--format mermaid|markdown|json)
+  dgp import <file>...    Bring in diagrams exported from another project
   dgp validate <diagram>  Report problems with a diagram
   dgp install-mcp         Register the MCP server with your AI tools
                           (Claude Code, Claude Desktop, Codex, Cursor, ...)
@@ -33,7 +41,12 @@ Options
   --port <n>              Port for the editor (default ${DEFAULT_PORT})
   --host <h>              Host to bind (default 127.0.0.1)
   --root <path>           Project root holding .diagrams (default: nearest project)
-  --format <f>            Export format for \`export\`
+  --format <f>            Export format for \`export\` (default mermaid,
+                          or json when --out is given)
+  --out <path>            Write \`export\` to a file rather than stdout
+  --all                   Export every diagram in the project as one bundle
+  --replace, --copy       What \`import\` does with a diagram already here.
+                          Without one, it reports the clash and writes nothing.
   --help, -h              Show this help
 `;
 
@@ -140,15 +153,102 @@ async function main(): Promise<void> {
     }
 
     case 'export': {
+      const out = typeof args.flags['out'] === 'string' ? args.flags['out'] : null;
+
+      // A bundle is the whole project in one file, for handing the design to
+      // someone who has the app but not the repository.
+      if (args.flags['all']) {
+        const summaries = await store.list();
+        if (!summaries.length) throw new Error(`No diagrams in ${store.dir}.`);
+        const diagrams: Diagram[] = [];
+        for (const summary of summaries) diagrams.push(await store.readBySlug(summary.slug));
+        const contents = serializeBundle(
+          createBundle(diagrams, { source: path.basename(root) }),
+        );
+        if (!out) {
+          process.stdout.write(contents);
+          return;
+        }
+        await writeFile(out, contents, 'utf8');
+        process.stdout.write(`Exported ${diagrams.length} diagrams to ${path.resolve(out)}\n`);
+        return;
+      }
+
       const ref = requireArg(args, 'export <diagram>');
-      const format = (typeof args.flags['format'] === 'string' ? args.flags['format'] : 'mermaid') as
+      // Writing to a file usually means sending it somewhere, and JSON is the
+      // only one of the three that can be imported again.
+      const fallback = out ? 'json' : 'mermaid';
+      const format = (typeof args.flags['format'] === 'string' ? args.flags['format'] : fallback) as
         | 'mermaid'
         | 'markdown'
         | 'json';
       if (!['mermaid', 'markdown', 'json'].includes(format)) {
         throw new Error(`Unknown format "${format}". Use mermaid, markdown or json.`);
       }
-      process.stdout.write(exportDiagram(await store.read(ref), format));
+      const contents = exportDiagram(await store.read(ref), format);
+      if (!out) {
+        process.stdout.write(contents);
+        return;
+      }
+      await writeFile(out, contents, 'utf8');
+      process.stdout.write(`Exported ${ref} to ${path.resolve(out)}\n`);
+      return;
+    }
+
+    /**
+     * The other half of `export`: a diagram that has been round the houses and
+     * needs to come back in. It never overwrites without being told to, because
+     * the thing it would overwrite is a file in the user's repository.
+     */
+    case 'import': {
+      if (!args.positional.length) {
+        throw new Error('Missing argument. Usage: dgp import <file>...');
+      }
+      if (args.flags['replace'] && args.flags['copy']) {
+        throw new Error('Pass --replace or --copy, not both.');
+      }
+      const mode = args.flags['replace'] ? 'replace' : args.flags['copy'] ? 'copy' : null;
+
+      const incoming: { diagram: Diagram; file: string }[] = [];
+      for (const file of args.positional) {
+        const resolved = path.resolve(file);
+        const text = await readFile(resolved, 'utf8');
+        for (const diagram of parseTransfer(text, path.basename(resolved)).diagrams) {
+          incoming.push({ diagram, file: path.basename(resolved) });
+        }
+      }
+
+      const plan = planImport(incoming, await store.list());
+      const clashes = plan.filter((candidate) => candidate.existing);
+      if (clashes.length && !mode) {
+        process.stderr.write(
+          `${clashes.length} of these ${clashes.length === 1 ? 'is' : 'are'} already in ${store.dir}:\n\n`,
+        );
+        for (const clash of clashes) {
+          process.stderr.write(
+            `  ${clash.incoming.name.padEnd(28)} matches ${clash.existing?.slug} ` +
+              `(${clash.existing?.blockCount} blocks, edited ${clash.existing?.updatedAt})\n`,
+          );
+        }
+        process.stderr.write(
+          `\nNothing was written. Re-run with --replace to overwrite them, ` +
+            `or --copy to add them alongside.\n`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+
+      for (const candidate of plan) {
+        const action = candidate.existing ? mode! : 'copy';
+        const outcome = await importDiagram(store, {
+          incoming: candidate.incoming,
+          action,
+          target: candidate.existing?.slug,
+        });
+        process.stdout.write(
+          `${action === 'replace' ? 'Replaced' : 'Added'} ${outcome.diagram.name} -> ${outcome.file}\n`,
+        );
+      }
       return;
     }
 

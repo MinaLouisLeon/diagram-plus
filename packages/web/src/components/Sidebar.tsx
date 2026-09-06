@@ -38,6 +38,16 @@ export function Sidebar({ onNewDiagram }: { onNewDiagram: () => void }) {
   );
 }
 
+/**
+ * Exporting from the list means exporting a diagram that may not be open.
+ * Opening it first keeps one rule — an export is always the diagram on screen,
+ * unsaved edits and all — instead of a second, quieter path to a file.
+ */
+async function exportDiagram(slug: string): Promise<void> {
+  await store.open(slug);
+  if (store.getState().current?.slug === slug) await store.exportCurrent();
+}
+
 function DiagramList({ onNewDiagram }: { onNewDiagram: () => void }) {
   const { diagrams, current } = useEditorState();
   const [confirming, setConfirming] = useState<DiagramSummary | null>(null);
@@ -49,12 +59,30 @@ function DiagramList({ onNewDiagram }: { onNewDiagram: () => void }) {
         // The rows answer for themselves; this is the space around them. Text
         // the user has selected is left to the editing menu.
         if (event.defaultPrevented || window.getSelection()?.toString()) return;
-        showContextMenu(event, [{ label: 'New diagram…', onSelect: onNewDiagram }]);
+        showContextMenu(event, [
+          { label: 'New diagram…', onSelect: onNewDiagram },
+          separator,
+          { label: 'Import from a file…', onSelect: () => void store.beginImport() },
+          {
+            label: 'Export all diagrams…',
+            disabled: diagrams.length === 0,
+            onSelect: () => void store.exportAll(),
+          },
+        ]);
       }}
     >
-      <button className="btn primary" style={{ width: '100%' }} onClick={onNewDiagram}>
-        + New diagram
-      </button>
+      <div className="diagram-list-actions">
+        <button className="btn primary" onClick={onNewDiagram}>
+          + New diagram
+        </button>
+        <button
+          className="btn"
+          onClick={() => void store.beginImport()}
+          title="Bring in a diagram someone sent you"
+        >
+          Import…
+        </button>
+      </div>
       <div className="section-label">In this project</div>
       {diagrams.length === 0 ? (
         <p className="hint" style={{ padding: '0 4px' }}>
@@ -74,6 +102,11 @@ function DiagramList({ onNewDiagram }: { onNewDiagram: () => void }) {
                 onSelect: () => void store.open(diagram.slug),
               },
               separator,
+              {
+                label: 'Export…',
+                hint: current?.slug === diagram.slug ? undefined : 'Opens it first',
+                onSelect: () => void exportDiagram(diagram.slug),
+              },
               {
                 label: 'Copy file path',
                 onSelect: () => void copyText(`.diagrams/${diagram.slug}.diagram.json`),

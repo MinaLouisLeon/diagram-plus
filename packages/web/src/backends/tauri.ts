@@ -8,10 +8,12 @@ import {
   EDGE_TYPE_INFO,
   RevisionConflictError,
   applyBatch,
+  assignDiagramContent,
   autoLayout,
   catalogList,
   exportDiagram,
   generateSpec,
+  importDiagram,
   safeParseDiagram,
   validateDiagram,
   type BatchOperation,
@@ -198,19 +200,33 @@ const api: Api = {
     }
     const next = parsed.data;
     return {
-      diagram: await write(slug, (draft) => {
-        draft.blocks = next.blocks;
-        draft.edges = next.edges;
-        draft.groups = next.groups;
-        draft.canvas = next.canvas;
-        draft.name = next.name;
-        draft.description = next.description;
-        draft.projectGoal = next.projectGoal;
-        draft.techStack = next.techStack;
-        draft.notes = next.notes;
-        draft.status = next.status;
-      }),
+      diagram: await write(slug, (draft) => assignDiagramContent(draft, next)),
     };
+  },
+
+  async importDiagram(body) {
+    const parsed = safeParseDiagram(body.diagram);
+    if (!parsed.success) {
+      throw new ApiError(
+        400,
+        `That is not a diagram: ${parsed.error.issues[0]?.message ?? 'unknown error'}`,
+      );
+    }
+    if (body.action === 'replace' && !body.target) {
+      throw new ApiError(400, 'Replacing needs a diagram to replace.');
+    }
+
+    try {
+      const outcome = await importDiagram(store, {
+        incoming: parsed.data,
+        action: body.action,
+        target: body.target,
+      });
+      changed(outcome.diagram, 'api');
+      return { diagram: outcome.diagram, action: outcome.action, replaced: outcome.replaced };
+    } catch (err) {
+      return rethrow(err);
+    }
   },
 
   async batch(slug, operations: BatchOperation[], layout = false) {

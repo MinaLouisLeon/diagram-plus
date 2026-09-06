@@ -49,6 +49,9 @@ const api: Api = {
   replaceDiagram: (slug, diagram: Diagram) =>
     request(`/api/diagrams/${slug}`, { method: 'PUT', body: JSON.stringify({ diagram }) }),
 
+  importDiagram: (body) =>
+    request('/api/diagrams/import', { method: 'POST', body: JSON.stringify(body) }),
+
   batch: (slug, operations: BatchOperation[], layout = false) =>
     request(`/api/diagrams/${slug}/batch`, {
       method: 'POST',

@@ -199,3 +199,82 @@ describe('live updates', () => {
     expect(external, 'an external file edit should reach the editor').toBeDefined();
   });
 });
+
+describe('importing a diagram from elsewhere', () => {
+  interface DiagramBody {
+    diagram: {
+      id: string;
+      slug: string;
+      name: string;
+      revision: number;
+      description: string;
+      blocks: unknown[];
+    };
+  }
+
+  it('replaces the local diagram in place, keeping its identity', async () => {
+    const created = await call<DiagramBody>('POST', '/api/diagrams', { name: 'Handoff' });
+    const mine = created.body.diagram;
+
+    // What comes back from someone who has the app but not this repository.
+    const theirs = { ...mine, name: 'Handoff reviewed', description: 'edited elsewhere', revision: 84 };
+
+    const imported = await call<DiagramBody & { replaced: string | null }>(
+      'POST',
+      '/api/diagrams/import',
+      { diagram: theirs, action: 'replace', target: mine.slug },
+    );
+
+    expect(imported.status).toBe(200);
+    expect(imported.body.replaced).toBe('handoff');
+    expect(imported.body.diagram.id).toBe(mine.id);
+    expect(imported.body.diagram.slug).toBe('handoff');
+    expect(imported.body.diagram.description).toBe('edited elsewhere');
+    // Ours plus one, not theirs.
+    expect(imported.body.diagram.revision).toBe(mine.revision + 1);
+
+    const list = await call<{ diagrams: { slug: string }[] }>('GET', '/api/diagrams');
+    expect(list.body.diagrams.filter((d) => d.slug.startsWith('handoff'))).toHaveLength(1);
+  });
+
+  it('adds a copy alongside instead, when asked', async () => {
+    const created = await call<DiagramBody>('POST', '/api/diagrams', { name: 'Keep Both' });
+    const mine = created.body.diagram;
+
+    const imported = await call<DiagramBody>('POST', '/api/diagrams/import', {
+      diagram: { ...mine, description: 'the other one' },
+      action: 'copy',
+    });
+
+    expect(imported.body.diagram.slug).toBe('keep-both-imported');
+    expect(imported.body.diagram.id).not.toBe(mine.id);
+
+    const original = await call<DiagramBody>('GET', '/api/diagrams/keep-both');
+    expect(original.body.diagram.description).toBe('');
+  });
+
+  it('will not overwrite anything by omission', async () => {
+    const created = await call<DiagramBody>('POST', '/api/diagrams', { name: 'Careful' });
+
+    const noAction = await call<{ error: string }>('POST', '/api/diagrams/import', {
+      diagram: created.body.diagram,
+    });
+    expect(noAction.status).toBe(400);
+
+    const noTarget = await call<{ error: string }>('POST', '/api/diagrams/import', {
+      diagram: created.body.diagram,
+      action: 'replace',
+    });
+    expect(noTarget.status).toBe(400);
+    expect(noTarget.body.error).toMatch(/target/);
+  });
+
+  it('rejects a file that is not a diagram', async () => {
+    const { status, body } = await call<{ error: string }>('POST', '/api/diagrams/import', {
+      diagram: { hello: 'world' },
+      action: 'copy',
+    });
+    expect(status).toBe(400);
+    expect(body.error).toMatch(/not a diagram/);
+  });
+});

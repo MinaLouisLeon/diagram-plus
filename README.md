@@ -6,7 +6,7 @@ diagram-plus is two things that share one file:
 
 - **A visual editor** — a drag-and-drop canvas of typed blocks (screens, endpoints,
   services, data models, jobs…) connected by typed relationships.
-- **An MCP server** — 25 tools that let Claude Code create, edit and *read* those
+- **An MCP server** — 26 tools that let Claude Code create, edit and *read* those
   same diagrams.
 
 The diagram is a **machine-writable, human-editable specification** that sits between
@@ -232,6 +232,46 @@ endpoint, service and screen with its fields — and writes the project. As each
 lands it calls `mark_block_implemented`, so the **Progress** panel fills in while you
 watch.
 
+### Send a diagram to someone who does not have the repository
+
+The person best placed to draw the design is not always the person with commit
+access. The **⇅** button in the toolbar sends a diagram out as a file and takes one
+back:
+
+- **Export this diagram…** writes a `.diagram.json` — the same bytes that sit in
+  `.diagrams/`, so it can be emailed, dropped in a chat, or copied straight into a
+  repository by anyone who does have one.
+- **Export all diagrams…** writes every diagram in the project as one
+  `.diagrams.json` bundle, for handing over a whole design.
+- **Import from a file…** reads either back. Pick several files at once if you like.
+
+The other person needs nothing but the app: they open any folder as a project,
+import the file, edit it, and export it back to you.
+
+Importing almost always means overwriting a diagram you already have, so it asks
+first and shows you both sides — how many blocks each has, when each was last
+edited, and which of yours it matched. Per file you choose **Replace**, **Keep
+both** or **Skip**; nothing is written until you confirm.
+
+It matches on the diagram's id rather than its name, so a diagram that came back
+renamed still lands on the right file. A replace keeps your id and your file name,
+which means git shows one diagram changed rather than a delete and an add — and the
+next trip out and back still finds its way home.
+
+The same round trip works from the terminal and from Claude:
+
+```bash
+dgp export recipe-box --out ~/Desktop/recipe-box.diagram.json
+dgp export --all --out ~/Desktop/my-project.diagrams.json
+dgp import ~/Downloads/recipe-box.diagram.json --replace
+```
+
+> import the diagram they sent me at ~/Downloads/recipe-box.diagram.json
+
+Neither will overwrite anything without being told to: run `dgp import` with no
+`--replace`/`--copy` and it reports what clashes and writes nothing, and the
+`import_diagram` tool does the same so Claude has to ask you first.
+
 ---
 
 ## The block types
@@ -275,6 +315,8 @@ dgp init                Create .diagrams in this project
 dgp list                List the diagrams in this project
 dgp spec <diagram>      Print the implementation spec as Markdown
 dgp export <diagram>    Print the diagram (--format mermaid|markdown|json)
+                        --out <path> writes a file, --all bundles every diagram
+dgp import <file>...    Bring in diagrams exported from another project
 dgp validate <diagram>  Report problems with a diagram
 dgp install-mcp         Register the MCP server with your AI tools
 ```
@@ -283,7 +325,7 @@ dgp install-mcp         Register the MCP server with your AI tools
 
 ## MCP tools
 
-25 tools, grouped by what they are for. Full reference:
+26 tools, grouped by what they are for. Full reference:
 [docs/mcp-tools.md](docs/mcp-tools.md).
 
 **Discovery** `describe_block_schema`
@@ -291,6 +333,7 @@ dgp install-mcp         Register the MCP server with your AI tools
 **Creating** `create_diagram` · `create_diagram_from_outline`
 **Editing** `add_blocks` · `update_block` · `delete_blocks` · `add_edges` · `update_edge` · `delete_edges` · `apply_batch` · `move_blocks` · `auto_layout` · `update_diagram_meta` · `delete_diagram`
 **Building** `set_diagram_status` · `mark_block_implemented` · `implementation_progress` · `open_editor`
+**Sharing** `import_diagram`
 
 Two prompts are exposed as well: `design_project` and `implement_from_diagram`.
 

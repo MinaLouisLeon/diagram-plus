@@ -1,6 +1,7 @@
 mod diagrams;
 mod mcp;
 mod project;
+mod transfer;
 mod watcher;
 
 use tauri::Manager;
@@ -43,6 +44,8 @@ pub fn run() {
             diagrams::diagrams_read,
             diagrams::diagrams_write,
             diagrams::diagrams_remove,
+            transfer::transfer_pick_files,
+            transfer::transfer_save_file,
             mcp::mcp_status,
             mcp::mcp_apply,
         ])

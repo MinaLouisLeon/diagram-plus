@@ -4,6 +4,7 @@ import { Inspector } from './components/Inspector';
 import { Sidebar } from './components/Sidebar';
 import { Toolbar } from './components/Toolbar';
 import { BottomPanel } from './components/Panels';
+import { ImportDialog } from './components/ImportDialog';
 import { NewDiagramDialog } from './components/NewDiagramDialog';
 import { McpSettings } from './components/McpSettings';
 import { UnsavedDialog } from './components/UnsavedDialog';
@@ -164,13 +165,14 @@ export function App() {
       </div>
       {dialogOpen ? <NewDiagramDialog onClose={() => setDialogOpen(false)} /> : null}
       {settingsOpen ? <McpSettings onClose={() => setSettingsOpen(false)} /> : null}
+      <ImportDialog />
       <UnsavedDialog />
     </div>
   );
 }
 
 function Notices() {
-  const { error, externalEdit } = useEditorState();
+  const { error, externalEdit, notice } = useEditorState();
 
   // A notice that the canvas is already up to date can go on its own. One that
   // says the file and the canvas have diverged is the user's to dismiss.
@@ -180,11 +182,28 @@ function Notices() {
     return () => window.clearTimeout(timer);
   }, [externalEdit]);
 
+  // An import or export that worked needs saying once, not acknowledging.
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => store.dismissNotice(), 6000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
   if (error) {
     return (
       <div className="toast error">
         <span>{error}</span>
         <button className="btn subtle small" onClick={() => store.dismissError()}>
+          Dismiss
+        </button>
+      </div>
+    );
+  }
+  if (notice) {
+    return (
+      <div className="toast info">
+        <span>{notice}</span>
+        <button className="btn subtle small" onClick={() => store.dismissNotice()}>
           Dismiss
         </button>
       </div>

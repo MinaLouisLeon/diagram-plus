@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
@@ -16,7 +18,10 @@ import {
   findBlock,
   generateBlockSpec,
   generateSpec,
+  importDiagram,
   markImplemented,
+  parseTransfer,
+  planImport,
   moveBlocks,
   updateBlock,
   updateEdge,
@@ -645,6 +650,91 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       } catch (err) {
         return fail(errorMessage(err));
       }
+    },
+  );
+
+  /**
+   * The way a diagram gets back into a project it did not come from.
+   *
+   * Someone with the app but no repository access edits the design and sends
+   * the file back; this is what puts it where the rest of the tools can see
+   * it. It refuses to overwrite unless told to in the same call, because the
+   * thing it would overwrite is a file in the user's repository and the user
+   * is not the one making this call.
+   */
+  server.registerTool(
+    'import_diagram',
+    {
+      title: 'Import a diagram file',
+      description:
+        'Bring a diagram exported from another project into this one. Use it when the user has ' +
+        'been sent a .diagram.json file, or a .diagrams.json bundle of several, and wants it in ' +
+        'their project. Called without "action" it writes nothing and reports what each file ' +
+        'would land on, so you can ask the user before anything is overwritten.',
+      inputSchema: {
+        file: z
+          .string()
+          .describe('Path to the file. Absolute, or relative to the project root.'),
+        action: z
+          .enum(['replace', 'copy'])
+          .optional()
+          .describe(
+            'What to do about a diagram that is already in this project. "replace" overwrites ' +
+              'it, "copy" adds the incoming one alongside. Omit to see what would happen first. ' +
+              'Only ever set this after the user has said which they want.',
+          ),
+      },
+      annotations: { destructiveHint: true },
+    },
+    async ({ file, action }) => {
+      let candidates;
+      try {
+        const resolved = path.resolve(store.root, file);
+        const parsed = parseTransfer(await readFile(resolved, 'utf8'), path.basename(resolved));
+        candidates = planImport(
+          parsed.diagrams.map((diagram) => ({ diagram, file: path.basename(resolved) })),
+          await store.list(),
+        );
+      } catch (err) {
+        return fail(errorMessage(err));
+      }
+
+      const clashes = candidates.filter((candidate) => candidate.existing);
+      if (clashes.length && !action) {
+        const lines = clashes.map(
+          (clash) =>
+            `- "${clash.incoming.name}" (${diagramStats(clash.incoming).blocks} blocks) would land on ` +
+            `"${clash.existing?.name}" (${clash.existing?.slug}, ${clash.existing?.blockCount} blocks, ` +
+            `last edited ${clash.existing?.updatedAt}), matched by ${clash.matchedBy}.`,
+        );
+        return text(
+          `Nothing was written. ${clashes.length} of the ${candidates.length} diagram(s) in that ` +
+            `file already exist here:\n\n${lines.join('\n')}\n\n` +
+            `Ask the user whether to overwrite theirs, then call this again with ` +
+            `action="replace" — or action="copy" to keep both.`,
+        );
+      }
+
+      const done: string[] = [];
+      for (const candidate of candidates) {
+        try {
+          const outcome = await importDiagram(store, {
+            incoming: candidate.incoming,
+            action: candidate.existing ? (action as 'replace' | 'copy') : 'copy',
+            target: candidate.existing?.slug,
+          });
+          done.push(
+            `${outcome.replaced ? 'Replaced' : 'Added'} "${outcome.diagram.name}" ` +
+              `(${outcome.diagram.slug}) -> ${outcome.file}`,
+          );
+        } catch (err) {
+          // Say what did land before the failure, so nothing has to be guessed.
+          return fail(
+            [...done, `Failed on "${candidate.incoming.name}": ${errorMessage(err)}`].join('\n'),
+          );
+        }
+      }
+      return text(done.join('\n') || 'That file contained no diagrams.');
     },
   );
 

@@ -125,6 +125,17 @@ edits the diagram.
 - [x] README with install + usage, docs for the block catalog and MCP tools
 - [x] `dgp install-mcp` writes the Claude Code `.mcp.json` entry
 
+### Phase 8 — Sharing a diagram outside the repository
+- [x] Portable export: one diagram as `.diagram.json` (the on-disk bytes, so it is
+      also a drop-in), every diagram as a `.diagrams.json` bundle
+- [x] Import that reads either back, matching by diagram id first so a renamed
+      diagram still comes home to the right file
+- [x] Collision dialog showing both sides before anything is overwritten —
+      replace in place, keep both, or skip, per file
+- [x] Native Save/Open dialogs on the desktop, download and file picker in the browser
+- [x] `dgp export --out/--all`, `dgp import`, and the `import_diagram` MCP tool —
+      none of which overwrite anything unless explicitly told to
+
 ---
 
 ## Progress
@@ -136,11 +147,13 @@ edits the diagram.
 | 2 — Spec + layout | ✅ done | `spec.ts`, `layout.ts`, `analysis.ts`, `export.ts` |
 | 3 — Server + CLI | ✅ done | `packages/server` — REST, WebSocket, file watch, `dgp` |
 | 4 — Web editor | ✅ done | `packages/web` — canvas, palette, generated inspector, panels |
-| 5 — MCP server | ✅ done | `packages/mcp` — 25 tools, 1 resource, 2 prompts |
+| 5 — MCP server | ✅ done | `packages/mcp` — 26 tools, 1 resource, 2 prompts |
 | 6 — Implementation bridge | ✅ done | status gating, per-block progress, build-order panel |
-| 7 — Tests + docs | ✅ done | 100 tests, README, generated block reference, MCP reference |
+| 7 — Tests + docs | ✅ done | 143 tests, README, generated block reference, MCP reference |
+| 8 — Sharing | ✅ done | `core/transfer.ts`, import dialog, `dgp import`, `import_diagram` |
 
-**Everything in this roadmap is built.** `npm test` runs 100 tests across the three
-non-UI packages, including an end-to-end pass over the whole loop; the editor was
-driven in a real browser to confirm the canvas, the inspector, live sync and the
-progress panel all work.
+**Everything in this roadmap is built.** `npm test` runs 143 tests across the three
+non-UI packages, including an end-to-end pass over the whole loop and over the
+export/import round trip; the editor was driven in a real browser to confirm the
+canvas, the inspector, live sync, the progress panel and the import dialog all
+work.
