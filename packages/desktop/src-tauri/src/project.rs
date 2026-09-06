@@ -35,10 +35,13 @@ pub struct ProjectState {
     pub recent: Vec<RecentProject>,
 }
 
+/// What survives between runs.
+///
+/// Deliberately only the recent list: the app never reopens a folder on its
+/// own, so a launch always starts on the welcome screen and the folder it
+/// works in is one the user picked in that session.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Settings {
-    #[serde(default)]
-    last: Option<String>,
     #[serde(default)]
     recent: Vec<RecentProject>,
 }
@@ -59,32 +62,44 @@ fn folder_name(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().to_string())
 }
 
+/// Where the recent list is kept.
+///
+/// A debug build writes next door to the installed app rather than into its
+/// config directory: developing on this app should never leave settings behind
+/// that a release build then picks up as if the user had chosen them.
+fn settings_file(app: &AppHandle) -> PathBuf {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let dir = if cfg!(debug_assertions) {
+        let name = dir
+            .file_name()
+            .map(|n| format!("{}.dev", n.to_string_lossy()))
+            .unwrap_or_else(|| "diagram-plus.dev".to_string());
+        dir.with_file_name(name)
+    } else {
+        dir
+    };
+    dir.join("settings.json")
+}
+
 fn now_iso() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
 
 impl Project {
     pub fn load(app: &AppHandle) -> Self {
-        let settings_file = app
-            .path()
-            .app_config_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("settings.json");
+        let settings_file = settings_file(app);
 
         let settings: Settings = fs::read_to_string(&settings_file)
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
 
-        // Only reopen the last project if it is still there; a stale path
-        // should land the user on the welcome screen, not an error.
-        let root = settings
-            .last
-            .map(PathBuf::from)
-            .filter(|path| path.is_dir());
-
         Self {
-            root: Mutex::new(root),
+            // No folder is open until the user picks one in this session.
+            root: Mutex::new(None),
             recent: Mutex::new(settings.recent),
             settings_file,
         }
@@ -117,7 +132,6 @@ impl Project {
 
     fn persist(&self) {
         let settings = Settings {
-            last: self.root().map(|r| r.to_string_lossy().to_string()),
             recent: self.recent.lock().unwrap().clone(),
         };
         if let Some(parent) = self.settings_file.parent() {
