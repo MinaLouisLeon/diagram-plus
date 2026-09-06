@@ -11,7 +11,8 @@ interface ToolbarProps {
 }
 
 export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
-  const { current, connection, saving, panel, canUndo, canRedo, validation } = useEditorState();
+  const { current, connection, saving, dirty, panel, canUndo, canRedo, validation } =
+    useEditorState();
   const { root } = useProject();
   const stats = current ? diagramStats(current) : null;
   const errorCount = validation?.errors.length ?? 0;
@@ -27,7 +28,11 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
       {desktop && root ? (
         <button
           className="btn subtle project-switch"
-          onClick={() => void project.pick()}
+          onClick={() =>
+            void store.confirmDiscard('project').then((ok) => {
+              if (ok) void project.pick();
+            })
+          }
           title={`${root}\n\nClick to open a different project`}
         >
           {root.replace(/^.*[\\/]/, '') || root}
@@ -52,13 +57,13 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
 
       {current ? (
         <>
-          <button className="btn subtle icon" title="Undo (Ctrl+Z)" disabled={!canUndo} onClick={() => void store.undo()}>
+          <button className="btn subtle icon" title="Undo (Ctrl+Z)" disabled={!canUndo} onClick={() => store.undo()}>
             ↶
           </button>
-          <button className="btn subtle icon" title="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onClick={() => void store.redo()}>
+          <button className="btn subtle icon" title="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onClick={() => store.redo()}>
             ↷
           </button>
-          <button className="btn" title="Arrange blocks by dependency" onClick={() => void store.runLayout('LR')}>
+          <button className="btn" title="Arrange blocks by dependency" onClick={() => store.runLayout('LR')}>
             Tidy up
           </button>
           <button
@@ -89,9 +94,21 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
             Spec
           </button>
           <button
+            className={`btn${dirty ? ' primary' : ''}`}
+            disabled={!dirty || saving}
+            onClick={() => void store.save()}
+            title={
+              dirty
+                ? 'Write your changes to the diagram file (Ctrl+S)'
+                : 'Everything is saved'
+            }
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+          <button
             className="btn primary"
             onClick={() =>
-              void store.patchMeta({ status: current.status === 'ready' ? 'draft' : 'ready' })
+              store.patchMeta({ status: current.status === 'ready' ? 'draft' : 'ready' })
             }
             title={
               current.status === 'ready'
@@ -124,7 +141,9 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
           connection === 'open'
             ? saving
               ? 'Saving…'
-              : 'Live — changes save automatically'
+              : dirty
+                ? 'Unsaved changes — press Save to write them to the file'
+                : 'Live — everything is saved'
             : `Connection ${connection}`
         }
       />

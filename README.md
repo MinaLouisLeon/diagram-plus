@@ -208,7 +208,11 @@ that kind of block: a data model gets fields, relations and indexes; an endpoint
 a method, path, request body and error cases; a function gets parameters and
 pseudo-code steps.
 
-Everything saves as you type. Press **Spec** to see exactly what Claude will read.
+Your edits stay in the editor until you press **Save**, so you can try something
+and walk it back without ever touching the file — the button lights up as soon as
+there is anything to write, and `Ctrl`/`Cmd`+`S` does the same. Closing the app or
+opening another diagram with unsaved changes asks first. Press **Spec** to see
+exactly what Claude will read.
 
 ### Ask Claude to edit it
 

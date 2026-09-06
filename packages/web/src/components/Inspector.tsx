@@ -270,7 +270,7 @@ function DiagramInspector({ diagram }: { diagram: Diagram }) {
     setNotes(diagram.notes);
   }, [diagram.slug, diagram.projectGoal, diagram.description, diagram.notes]);
 
-  const commit = (patch: Record<string, unknown>) => void store.patchMeta(patch);
+  const commit = (patch: Record<string, unknown>) => store.patchMeta(patch);
 
   return (
     <>
@@ -347,7 +347,7 @@ function StackField({
         className="control"
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        onBlur={() => void store.patchMeta({ techStack: { [label]: value } })}
+        onBlur={() => store.patchMeta({ techStack: { [label]: value } })}
       />
     </div>
   );
