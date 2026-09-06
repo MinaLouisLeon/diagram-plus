@@ -5,12 +5,21 @@ import { Sidebar } from './components/Sidebar';
 import { Toolbar } from './components/Toolbar';
 import { BottomPanel } from './components/Panels';
 import { NewDiagramDialog } from './components/NewDiagramDialog';
+import { McpSettings } from './components/McpSettings';
+import { Welcome } from './components/Welcome';
+import { isDesktop, project, useProject } from './desktop';
 import { store, useEditorState } from './store';
 
 /**
  * The shell. Routing is one path deep — `/d/<slug>` opens a diagram — so it is
  * handled here rather than pulled in as a dependency.
+ *
+ * The desktop app skips the URL entirely: it is served from a custom protocol
+ * where a reload of `/d/<slug>` would not resolve to anything, and it has a
+ * window rather than an address bar to keep in step.
  */
+
+const DESKTOP = isDesktop();
 
 function slugFromLocation(): string | null {
   const match = /^\/d\/([^/?#]+)/.exec(location.pathname);
@@ -19,15 +28,32 @@ function slugFromLocation(): string | null {
 
 export function App() {
   const state = useEditorState();
+  const { root } = useProject();
+  const [ready, setReady] = useState(!DESKTOP);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // On the desktop the project has to be known before the editor can ask for
+  // anything, so it is settled first and the editor started after.
+  useEffect(() => {
+    let cancelled = false;
+    void project.init().then(() => {
+      if (!cancelled) setReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
+    if (!ready || (DESKTOP && !root)) return;
     void store.init();
     return () => store.dispose();
-  }, []);
+  }, [ready, DESKTOP ? root : null]);
 
   // Open whatever the URL points at, and keep the URL in step with the app.
   useEffect(() => {
+    if (DESKTOP) return;
     const slug = slugFromLocation();
     if (slug) void store.open(slug);
     const onPop = () => {
@@ -39,7 +65,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!state.current) return;
+    if (DESKTOP || !state.current) return;
     const target = `/d/${state.current.slug}`;
     if (location.pathname !== target) history.replaceState(null, '', target);
   }, [state.current?.slug]);
@@ -70,10 +96,26 @@ export function App() {
   }, []);
 
   const openDialog = useCallback(() => setDialogOpen(true), []);
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
+
+  if (DESKTOP && !ready) {
+    return <div className="empty full">
+      <div className="inner">Starting…</div>
+    </div>;
+  }
+
+  if (DESKTOP && !root) {
+    return (
+      <>
+        <Welcome />
+        {settingsOpen ? <McpSettings onClose={() => setSettingsOpen(false)} /> : null}
+      </>
+    );
+  }
 
   return (
     <div className="app">
-      <Toolbar onNewDiagram={openDialog} />
+      <Toolbar onNewDiagram={openDialog} onOpenSettings={openSettings} />
       <div className={`workspace${state.current ? '' : ' no-inspector'}`}>
         <Sidebar onNewDiagram={openDialog} />
         <div className="canvas-area">
@@ -88,6 +130,7 @@ export function App() {
         ) : null}
       </div>
       {dialogOpen ? <NewDiagramDialog onClose={() => setDialogOpen(false)} /> : null}
+      {settingsOpen ? <McpSettings onClose={() => setSettingsOpen(false)} /> : null}
     </div>
   );
 }

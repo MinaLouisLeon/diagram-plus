@@ -1,19 +1,39 @@
 import { diagramStats } from '@diagram-plus/core/browser';
+import { isDesktop, project, useProject } from '../desktop';
 import { store, useEditorState } from '../store';
 
 /** The top bar: what diagram you are on, its state, and the global actions. */
 
-export function Toolbar({ onNewDiagram }: { onNewDiagram: () => void }) {
+interface ToolbarProps {
+  onNewDiagram: () => void;
+  /** Desktop only — opens the MCP settings screen. */
+  onOpenSettings?: () => void;
+}
+
+export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
   const { current, connection, saving, panel, canUndo, canRedo, validation } = useEditorState();
+  const { root } = useProject();
   const stats = current ? diagramStats(current) : null;
   const errorCount = validation?.errors.length ?? 0;
   const warningCount = validation?.warnings.length ?? 0;
+  const desktop = isDesktop();
 
   return (
     <div className="toolbar">
       <div className="brand">
         diagram<span style={{ color: 'var(--accent)' }}>+</span>
       </div>
+
+      {desktop && root ? (
+        <button
+          className="btn subtle project-switch"
+          onClick={() => void project.pick()}
+          title={`${root}\n\nClick to open a different project`}
+        >
+          {root.replace(/^.*[\\/]/, '') || root}
+          <span aria-hidden="true">▾</span>
+        </button>
+      ) : null}
 
       {current ? (
         <>
@@ -87,6 +107,16 @@ export function Toolbar({ onNewDiagram }: { onNewDiagram: () => void }) {
           + New diagram
         </button>
       )}
+
+      {desktop && onOpenSettings ? (
+        <button
+          className="btn subtle icon"
+          onClick={onOpenSettings}
+          title="Connect your AI tools to diagram-plus"
+        >
+          ⚙
+        </button>
+      ) : null}
 
       <span
         className={`status-dot ${connection}`}

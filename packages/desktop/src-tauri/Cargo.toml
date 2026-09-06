@@ -1,0 +1,37 @@
+[package]
+name = "diagram-plus-desktop"
+version = "0.1.0"
+description = "Design your application as a block diagram, then have Claude Code build it."
+authors = ["diagram-plus"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "diagram_plus_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+toml_edit = "0.22"
+notify = "8"
+dirs = "6"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+which = "7"
+
+[features]
+# Used by `tauri dev` to enable devtools in a release-profile build.
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

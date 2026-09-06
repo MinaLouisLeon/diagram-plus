@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useRef, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import {
+  applyNodeChanges,
   Background,
   BackgroundVariant,
   Controls,
@@ -74,19 +75,37 @@ function CanvasInner() {
   const { current, selectedBlocks, selectedEdges } = useEditorState();
   const wrapper = useRef<HTMLDivElement>(null);
   const flow = useReactFlow();
-  /** Positions captured while a drag is in progress, committed on drag stop. */
-  const dragging = useRef(new Map<string, { x: number; y: number }>());
+  /** True between the first and last frame of a drag or resize gesture. */
+  const gesturing = useRef(false);
 
-  const nodes = useMemo(
-    () => (current ? toNodes(current, selectedBlocks) : []),
-    [current, selectedBlocks],
+  /**
+   * React Flow drives the nodes during a gesture and the store owns them the
+   * rest of the time.
+   *
+   * The store is only told where a block ended up, once, on drag stop — one
+   * operation and one write per move rather than one per frame. But that means
+   * the store cannot be the source of truth *while* the pointer is down, or
+   * the block would sit still until the gesture finished and then jump.
+   */
+  const [nodes, setNodes] = useState<BlockFlowNode[]>(() =>
+    current ? toNodes(current, selectedBlocks) : [],
   );
+
+  useEffect(() => {
+    // Mid-gesture, React Flow's copy is ahead of the store's; leave it alone.
+    if (gesturing.current) return;
+    setNodes(current ? toNodes(current, selectedBlocks) : []);
+  }, [current, selectedBlocks]);
+
   const edges = useMemo(
     () => (current ? toEdges(current, selectedEdges) : []),
     [current, selectedEdges],
   );
 
   const onNodesChange = useCallback((changes: NodeChange<BlockFlowNode>[]) => {
+    // Always apply first, so every frame of a drag or resize is drawn.
+    setNodes((previous) => applyNodeChanges(changes, previous));
+
     const moves: BatchOperation[] = [];
 
     // React Flow is controlled here, so selection only sticks if we apply it.
@@ -105,8 +124,9 @@ function CanvasInner() {
 
     for (const change of changes) {
       if (change.type === 'position' && change.position) {
-        dragging.current.set(change.id, change.position);
-        if (change.dragging === false) {
+        if (change.dragging) {
+          gesturing.current = true;
+        } else {
           moves.push({
             op: 'move_block',
             block: change.id,
@@ -115,24 +135,28 @@ function CanvasInner() {
           });
         }
       }
-      if (change.type === 'dimensions' && change.dimensions && change.resizing === false) {
-        moves.push({
-          op: 'update_block',
-          block: change.id,
-          patch: {
-            size: {
-              width: Math.round(change.dimensions.width),
-              height: Math.round(change.dimensions.height),
+      if (change.type === 'dimensions' && change.dimensions) {
+        if (change.resizing) {
+          gesturing.current = true;
+        } else if (change.resizing === false) {
+          moves.push({
+            op: 'update_block',
+            block: change.id,
+            patch: {
+              size: {
+                width: Math.round(change.dimensions.width),
+                height: Math.round(change.dimensions.height),
+              },
             },
-          },
-        });
+          });
+        }
       }
       if (change.type === 'remove') {
         moves.push({ op: 'delete_block', block: change.id });
       }
     }
     if (moves.length) {
-      dragging.current.clear();
+      gesturing.current = false;
       store.apply(moves);
     }
   }, []);
@@ -221,6 +245,12 @@ function CanvasInner() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        // A safety net: if a gesture ends without a final position change —
+        // a cancelled drag, a pointer lost outside the window — the flag has
+        // to clear anyway, or the canvas would stop taking updates from disk.
+        onNodeDragStop={() => {
+          gesturing.current = false;
+        }}
         defaultViewport={current.canvas}
         fitView={!hasSavedViewport && current.blocks.length > 0}
         onMoveEnd={(_, viewport) => store.saveViewport(viewport)}

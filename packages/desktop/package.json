@@ -1,0 +1,17 @@
+{
+  "name": "@diagram-plus/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "diagram-plus as a desktop app for Windows, macOS and Linux.",
+  "scripts": {
+    "bundle-mcp": "node bundle-mcp.mjs",
+    "dev": "npm run bundle-mcp && node tauri.mjs dev",
+    "build": "npm run bundle-mcp && node tauri.mjs build",
+    "build:debug": "npm run bundle-mcp && node tauri.mjs build --debug",
+    "icons": "node tauri.mjs icon app-icon.svg -o src-tauri/icons"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.0"
+  }
+}

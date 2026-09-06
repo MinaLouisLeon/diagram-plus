@@ -40,6 +40,25 @@ code they describe.
 
 ## Install
 
+Two ways in. The **desktop app** is a single installer with nothing else to set
+up; the **repository** is the one to clone if you want the `dgp` CLI or intend
+to work on diagram-plus itself.
+
+### The desktop app
+
+Download the installer for your platform from the
+[releases page](https://github.com/MinaLouisLeon/diagram-plus/releases) —
+`.exe`/`.msi` for Windows, `.dmg` for macOS, `.AppImage`/`.deb`/`.rpm` for
+Linux. Open it, pick a project folder, and the editor is there.
+
+It carries the MCP server with it: the gear in the toolbar finds the AI tools on
+your machine and registers diagram-plus with them, so there is no terminal step.
+(That server runs on Node 20+, which is the one thing to have installed.)
+
+Full details, including how to build it yourself: [docs/desktop.md](docs/desktop.md).
+
+### From the repository
+
 Node 20 or newer, on Windows, macOS or Linux.
 
 ```bash

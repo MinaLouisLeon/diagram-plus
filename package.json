@@ -6,25 +6,29 @@
     "packages/core",
     "packages/server",
     "packages/mcp",
-    "packages/web"
+    "packages/web",
+    "packages/desktop"
   ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "build": "npm run build -w @diagram-plus/core && npm run build -w @diagram-plus/mcp && npm run build -w @diagram-plus/server && npm run build -w @diagram-plus/web",
+    "build": "npm run build -w @diagram-plus/core && npm run build -w @diagram-plus/mcp && npm run build -w @diagram-plus/server && npm run build -w @diagram-plus/web && npm run bundle-mcp -w @diagram-plus/desktop",
     "build:libs": "npm run build -w @diagram-plus/core && npm run build -w @diagram-plus/mcp && npm run build -w @diagram-plus/server",
     "dev": "npm run dev -w @diagram-plus/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "node -e \"const fs=require('node:fs');for(const p of ['core','server','mcp','web']){fs.rmSync('packages/'+p+'/dist',{recursive:true,force:true});fs.rmSync('packages/'+p+'/tsconfig.tsbuildinfo',{force:true});}\"",
-    "install-mcp": "node packages/server/install-mcp.mjs"
+    "install-mcp": "node packages/server/install-mcp.mjs",
+    "desktop": "npm run dev -w @diagram-plus/desktop",
+    "desktop:build": "npm run build -w @diagram-plus/desktop"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "typescript": "^5.9.3",
+    "esbuild": "^0.28.2",
     "tsx": "^4.19.2",
+    "typescript": "^5.9.3",
     "vitest": "^2.1.8"
   }
 }

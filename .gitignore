@@ -8,3 +8,11 @@ coverage/
 packages/server/public/
 .env
 .scratch/
+
+# Playwright MCP scratch output
+.playwright-mcp/
+
+# Rust / Tauri build output
+target/
+packages/desktop/src-tauri/target/
+packages/desktop/src-tauri/gen/
