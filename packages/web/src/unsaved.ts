@@ -12,7 +12,7 @@ import { useSyncExternalStore } from 'react';
 export type UnsavedChoice = 'save' | 'discard' | 'cancel';
 
 /** What the user was trying to do, so the dialog can say so. */
-export type UnsavedReason = 'close' | 'switch' | 'project';
+export type UnsavedReason = 'close' | 'switch' | 'project' | 'import';
 
 export interface UnsavedPromptState {
   reason: UnsavedReason | null;

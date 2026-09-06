@@ -2,15 +2,24 @@ import { useSyncExternalStore } from 'react';
 import {
   applyBatch,
   autoLayout,
+  bundleFileName,
+  createBundle,
+  diagramFileName,
+  parseTransfer,
+  planImport,
+  serializeBundle,
+  serializeDiagramFile,
   validateDiagram,
   type BatchOperation,
   type BatchResult,
   type Diagram,
   type DiagramStatus,
   type DiagramSummary,
+  type ImportCandidate,
   type ValidationResult,
 } from '@diagram-plus/core/browser';
 import { api, connectLive, type Catalog, type LiveMessage } from './api';
+import { pickFiles, saveFile } from './transfer';
 import { unsavedPrompt, type UnsavedReason } from './unsaved';
 
 /**
@@ -48,6 +57,16 @@ export interface EditorState {
   externalEdit: { at: number; revision: number; applied: boolean } | null;
   canUndo: boolean;
   canRedo: boolean;
+  /** Project root, as the backend reports it. Names an exported bundle. */
+  root: string;
+  /**
+   * Files the user picked to import, paired with what they collide with.
+   * Non-null while the import dialog is up; nothing is written until it is
+   * confirmed.
+   */
+  importPlan: { candidates: ImportCandidate[]; warning: string | null } | null;
+  /** Said and gone — an import or export that finished. */
+  notice: string | null;
 }
 
 const HISTORY_LIMIT = 60;
@@ -69,6 +88,9 @@ class EditorStore {
     externalEdit: null,
     canUndo: false,
     canRedo: false,
+    root: '',
+    importPlan: null,
+    notice: null,
   };
 
   private listeners = new Set<() => void>();
@@ -144,7 +166,7 @@ class EditorStore {
 
   private onLive(message: LiveMessage): void {
     if (message.type === 'hello') {
-      this.set({ diagrams: message.diagrams });
+      this.set({ diagrams: message.diagrams, root: message.root });
       return;
     }
     if (message.type === 'diagram:deleted') {
@@ -372,6 +394,172 @@ class EditorStore {
     }
   }
 
+  /* ---- import and export ----------------------------------------------- */
+
+  /**
+   * Write the open diagram out as a file the user can send to someone who does
+   * not have this repository.
+   *
+   * It exports the copy on screen, unsaved edits and all: that is the diagram
+   * the user is looking at and means by "this one", and being asked to save
+   * first before you can send a draft to a colleague would be a strange rule.
+   */
+  async exportCurrent(): Promise<void> {
+    const current = this.state.current;
+    if (!current) return;
+    try {
+      const path = await saveFile(diagramFileName(current), serializeDiagramFile(current));
+      if (path) this.set({ notice: `Exported “${current.name}” to ${path}.`, error: null });
+    } catch (err) {
+      this.set({ error: describe(err) });
+    }
+  }
+
+  /** Every diagram in the project, in one file. */
+  async exportAll(): Promise<void> {
+    const summaries = this.state.diagrams;
+    if (!summaries.length) {
+      this.set({ error: 'There are no diagrams in this project to export.' });
+      return;
+    }
+
+    try {
+      const current = this.state.current;
+      const diagrams = await Promise.all(
+        summaries.map(async (summary) =>
+          // The open one comes from the canvas rather than the file, so a
+          // bundle matches what "export this diagram" would have given.
+          current?.slug === summary.slug
+            ? current
+            : (await api.getDiagram(summary.slug)).diagram,
+        ),
+      );
+      const source = projectName(this.state.root);
+      const path = await saveFile(
+        bundleFileName(source),
+        serializeBundle(createBundle(diagrams, { source })),
+      );
+      if (path) {
+        this.set({
+          notice: `Exported ${diagrams.length} diagram${diagrams.length === 1 ? '' : 's'} to ${path}.`,
+          error: null,
+        });
+      }
+    } catch (err) {
+      this.set({ error: describe(err) });
+    }
+  }
+
+  /**
+   * Read the files the user picked and work out what each would land on.
+   *
+   * Nothing is written here. The dialog this opens is the point of the whole
+   * feature: an import usually means overwriting a diagram, and the user
+   * should see what they are about to overwrite before it happens.
+   */
+  async beginImport(): Promise<void> {
+    let files;
+    try {
+      files = await pickFiles();
+    } catch (err) {
+      this.set({ error: describe(err) });
+      return;
+    }
+    if (!files.length) return;
+
+    const incoming: { diagram: Diagram; file: string }[] = [];
+    let newer = false;
+    try {
+      for (const file of files) {
+        const parsed = parseTransfer(file.text, file.name);
+        if (parsed.fromNewerFormat) newer = true;
+        for (const diagram of parsed.diagrams) incoming.push({ diagram, file: file.name });
+      }
+    } catch (err) {
+      this.set({ error: describe(err) });
+      return;
+    }
+
+    this.set({
+      error: null,
+      importPlan: {
+        candidates: planImport(incoming, this.state.diagrams),
+        warning: newer
+          ? 'This was written by a newer version of diagram-plus. Anything it added that ' +
+            'this version does not know about will not survive the import.'
+          : null,
+      },
+    });
+  }
+
+  cancelImport(): void {
+    this.set({ importPlan: null });
+  }
+
+  /** Carry out the import the user confirmed, one diagram at a time. */
+  async commitImport(candidates: ImportCandidate[]): Promise<void> {
+    const chosen = candidates.filter((candidate) => candidate.action !== 'skip');
+    if (!chosen.length) {
+      this.set({ importPlan: null });
+      return;
+    }
+
+    // Overwriting the diagram on screen would take its unsaved edits with it,
+    // so it asks the same question that opening another diagram asks.
+    const open = this.state.current;
+    const hitsOpen = chosen.some(
+      (candidate) => candidate.action === 'replace' && candidate.existing?.slug === open?.slug,
+    );
+    if (hitsOpen && this.state.dirty && !(await this.confirmDiscard('import'))) return;
+
+    const imported: Diagram[] = [];
+    let failed: string | null = null;
+    for (const candidate of chosen) {
+      try {
+        const { diagram } = await api.importDiagram({
+          diagram: candidate.incoming,
+          action: candidate.action === 'replace' ? 'replace' : 'copy',
+          target: candidate.action === 'replace' ? candidate.existing?.slug : undefined,
+        });
+        imported.push(diagram);
+      } catch (err) {
+        // Stop rather than carry on: the ones already written stay, and the
+        // message names the one that did not so the user knows where it got to.
+        failed = `Could not import “${candidate.incoming.name}”: ${describe(err)}`;
+        break;
+      }
+    }
+
+    const list = await api.listDiagrams().catch(() => ({ diagrams: this.state.diagrams }));
+    this.set({
+      diagrams: list.diagrams,
+      importPlan: null,
+      error: failed,
+      notice: imported.length
+        ? `Imported ${imported.length} diagram${imported.length === 1 ? '' : 's'}.`
+        : null,
+    });
+
+    const last = imported[imported.length - 1];
+    if (!last) return;
+
+    if (open && imported.some((diagram) => diagram.slug === open.slug)) {
+      // What the user was looking at has just been overwritten underneath them.
+      this.undoStack = [];
+      this.redoStack = [];
+      this.set({ dirty: false });
+      await this.reload();
+      return;
+    }
+    // Land on what was just imported, unless unsaved work elsewhere would have
+    // to be interrupted to get there.
+    if (!this.state.dirty) await this.open(last.slug);
+  }
+
+  dismissNotice(): void {
+    this.set({ notice: null });
+  }
+
   /* ---- history --------------------------------------------------------- */
 
   private pushHistory(): void {
@@ -424,6 +612,11 @@ class EditorStore {
 
 function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** Folder name of a project root, for naming an exported bundle. */
+function projectName(root: string): string {
+  return root.replace(/[\\/]+$/, '').replace(/^.*[\\/]/, '') || 'diagrams';
 }
 
 export const store = new EditorStore();

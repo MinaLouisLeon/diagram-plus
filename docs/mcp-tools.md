@@ -1,6 +1,6 @@
 # MCP tools
 
-The diagram-plus MCP server exposes 25 tools, 1 resource and 2 prompts. Every tool
+The diagram-plus MCP server exposes 26 tools, 1 resource and 2 prompts. Every tool
 that targets a diagram takes `diagram` — its slug, its id, or its exact name.
 
 Tool descriptions carry the block payload fields inline, so Claude knows what it can
@@ -144,6 +144,45 @@ How much is built, and what is left in build order.
 
 ### `open_editor`
 The URL where the user can review a diagram, and how to start the editor.
+
+---
+
+## Sharing
+
+### `import_diagram`
+Bring a diagram that came from another project into this one — a `.diagram.json`
+the user was sent, or a `.diagrams.json` bundle of several. `file` is absolute or
+relative to the project root.
+
+Called without `action` it writes nothing and reports what each diagram in the file
+would land on, so you can put the choice to the user before anything is overwritten:
+
+```jsonc
+{ "file": "~/Downloads/recipe-box.diagram.json" }
+```
+
+```
+Nothing was written. 1 of the 1 diagram(s) in that file already exist here:
+
+- "Recipe Box v2" (14 blocks) would land on "Recipe Box" (recipe-box, 11 blocks,
+  last edited 2026-09-01T10:02:11.884Z), matched by id.
+
+Ask the user whether to overwrite theirs, then call this again with
+action="replace" — or action="copy" to keep both.
+```
+
+Once they have said which they want, pass it:
+
+```jsonc
+{ "file": "~/Downloads/recipe-box.diagram.json", "action": "replace" }
+```
+
+`replace` overwrites in place, keeping the local id and file name, so it reads as an
+edit of one diagram rather than a delete and an add. `copy` adds the incoming one
+alongside under a free name. Only ever set `action` after the user has chosen.
+
+The matching is by diagram id first, then file name, then name — so a diagram that
+was renamed while it was away still comes home to the right file.
 
 ---
 

@@ -59,6 +59,18 @@ ready.
 MCP server edits updates on the canvas within a second — no refresh, same as the
 browser.
 
+**Work on a diagram from a project you do not have.** This is the app's own
+use case as much as the repository's: someone sends you a `.diagram.json`, you
+open any folder as a project, and the toolbar's **⇅** button imports the file.
+Edit it, export it back, send it on. Both directions use native Save and Open
+dialogs, and they are the only part of the app that reaches outside `.diagrams/`
+— the path always comes from a dialog the user just clicked through, never from
+the webview.
+
+Importing over a diagram you already have shows you both sides first and asks
+which to keep. See [the README](../README.md#send-a-diagram-to-someone-who-does-not-have-the-repository)
+for the whole round trip.
+
 **Connect your AI tools.** The gear in the toolbar opens the MCP settings, which
 does what `npm run install-mcp` does in a terminal: finds Claude Code, Claude
 Desktop, Codex, Cursor, Windsurf, VS Code and Gemini CLI, and registers the MCP
@@ -124,6 +136,7 @@ packages/desktop/
     src/lib.rs          wires the plugins, state and commands together
     src/project.rs      the open project, recent list, folder picker
     src/diagrams.rs     read, write, list and delete diagram files
+    src/transfer.rs     the import/export dialogs, the one path outside .diagrams/
     src/watcher.rs      notify → debounce → "diagram-changed"
     src/mcp.rs          detecting AI tools and writing their config
 ```

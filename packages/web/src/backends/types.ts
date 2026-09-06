@@ -1,5 +1,6 @@
 import type {
   BatchOperation,
+  ImportAction,
   BlockTypeInfo,
   BlockCategory,
   Diagram,
@@ -52,6 +53,18 @@ export interface Api {
   deleteDiagram(slug: string): Promise<{ deleted: string }>;
   patchDiagram(slug: string, body: Record<string, unknown>): Promise<{ diagram: Diagram }>;
   replaceDiagram(slug: string, diagram: Diagram): Promise<{ diagram: Diagram }>;
+  /**
+   * Write a diagram that came from another project.
+   *
+   * The file is read and the collision resolved in the editor, so this only
+   * carries out a decision the user has already seen and made. `target` is the
+   * diagram being overwritten, and is required to replace.
+   */
+  importDiagram(body: {
+    diagram: Diagram;
+    action: Exclude<ImportAction, 'skip'>;
+    target?: string;
+  }): Promise<{ diagram: Diagram; action: string; replaced: string | null }>;
   batch(
     slug: string,
     operations: BatchOperation[],

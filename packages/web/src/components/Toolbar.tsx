@@ -1,4 +1,5 @@
 import { diagramStats } from '@diagram-plus/core/browser';
+import { contextMenu, separator } from '../context-menu';
 import { isDesktop, project, useProject } from '../desktop';
 import { store, useEditorState } from '../store';
 
@@ -11,7 +12,7 @@ interface ToolbarProps {
 }
 
 export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
-  const { current, connection, saving, dirty, panel, canUndo, canRedo, validation } =
+  const { current, connection, saving, dirty, panel, canUndo, canRedo, validation, diagrams } =
     useEditorState();
   const { root } = useProject();
   const stats = current ? diagramStats(current) : null;
@@ -124,6 +125,36 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
           + New diagram
         </button>
       )}
+
+      <button
+        className="btn subtle icon"
+        onClick={(event) => {
+          // Anchored under the button rather than at the pointer, so it reads
+          // as that button's menu wherever it was clicked from.
+          const box = event.currentTarget.getBoundingClientRect();
+          contextMenu.open(box.left, box.bottom + 4, [
+            { kind: 'heading', label: 'Share a diagram' },
+            {
+              label: 'Export this diagram…',
+              hint: current ? undefined : 'No diagram open',
+              disabled: !current,
+              onSelect: () => void store.exportCurrent(),
+            },
+            {
+              label: 'Export all diagrams…',
+              hint: diagrams.length ? undefined : 'None in this project',
+              disabled: diagrams.length === 0,
+              onSelect: () => void store.exportAll(),
+            },
+            separator,
+            { label: 'Import from a file…', onSelect: () => void store.beginImport() },
+          ]);
+        }}
+        title="Import or export a diagram file"
+        aria-label="Import or export a diagram file"
+      >
+        ⇅
+      </button>
 
       {desktop && onOpenSettings ? (
         <button

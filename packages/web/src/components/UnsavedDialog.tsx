@@ -11,6 +11,7 @@ const REASONS: Record<UnsavedReason, string> = {
   close: 'Closing now would lose those changes.',
   switch: 'Opening another diagram would lose those changes.',
   project: 'Opening another project would lose those changes.',
+  import: 'The import is about to overwrite this diagram, which would lose them.',
 };
 
 export function UnsavedDialog() {
