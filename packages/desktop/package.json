@@ -5,6 +5,7 @@
   "type": "module",
   "description": "diagram-plus as a desktop app for Windows, macOS and Linux.",
   "scripts": {
+    "tauri": "node tauri.mjs",
     "bundle-mcp": "node bundle-mcp.mjs",
     "dev": "npm run bundle-mcp && node tauri.mjs dev",
     "build": "npm run bundle-mcp && node tauri.mjs build",
