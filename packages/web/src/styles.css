@@ -539,3 +539,59 @@ pre.spec {
 .report li.added strong, .report li.updated strong { color: var(--success); }
 .report li.failed strong { color: var(--danger); }
 .report li.skipped strong { color: var(--text-dim); }
+
+/* ---------- context menu ---------- */
+
+/*
+ * The backdrop is what makes the menu modal: it swallows the click that
+ * dismisses it, so a right-click never leaves the canvas panning or a button
+ * pressed on the way out.
+ */
+.context-menu-backdrop { position: fixed; inset: 0; z-index: 60; }
+
+.context-menu {
+  position: fixed;
+  min-width: 184px;
+  max-width: 320px;
+  padding: 5px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  outline: none;
+}
+
+.context-menu-rule { height: 1px; background: var(--border); margin: 5px 6px; }
+
+.context-menu-heading {
+  padding: 5px 9px 4px;
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.context-menu-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 6px 9px;
+  background: none; border: none; border-radius: 4px;
+  text-align: left; cursor: pointer; color: var(--text);
+}
+.context-menu-item.active { background: var(--accent-strong); color: #fff; }
+.context-menu-item.danger { color: var(--danger); }
+.context-menu-item.active.danger { background: var(--danger); color: #fff; }
+.context-menu-item:disabled { color: var(--text-dim); cursor: default; }
+
+.context-menu-item .tick {
+  width: 14px; flex: none; text-align: center; font-size: 12px;
+}
+.context-menu-item .label {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.context-menu-item .hint,
+.context-menu-item .arrow { flex: none; font-size: 11.5px; color: var(--text-dim); }
+.context-menu-item .arrow { font-size: 14px; }
+.context-menu-item.active .hint,
+.context-menu-item.active .arrow { color: color-mix(in srgb, #fff 75%, transparent); }
+
+/* The empty space under the diagram list answers a right-click too. */
+.diagram-list { min-height: 100%; }

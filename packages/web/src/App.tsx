@@ -8,6 +8,7 @@ import { NewDiagramDialog } from './components/NewDiagramDialog';
 import { McpSettings } from './components/McpSettings';
 import { UnsavedDialog } from './components/UnsavedDialog';
 import { Welcome } from './components/Welcome';
+import { showContextMenu } from './context-menu';
 import { closeWindow, isDesktop, onCloseRequested, project, useProject } from './desktop';
 import { store, useEditorState } from './store';
 
@@ -227,7 +228,15 @@ function EmptyState({ loading, onNew }: { loading: boolean; onNew: () => void })
   }
 
   return (
-    <div className="empty">
+    <div
+      className="empty"
+      onContextMenu={(event) => {
+        // The only thing to do from here is start a diagram — unless the user
+        // has text selected, in which case the editing menu is the useful one.
+        if (event.defaultPrevented || window.getSelection()?.toString()) return;
+        showContextMenu(event, [{ label: 'New diagram…', onSelect: onNew }]);
+      }}
+    >
       <div className="inner">
         <h2>{diagrams.length ? 'Pick a diagram' : 'Design your project first'}</h2>
         {diagrams.length ? (
