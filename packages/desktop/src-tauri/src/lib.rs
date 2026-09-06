@@ -27,13 +27,9 @@ pub fn run() {
             app.manage(Watcher::start(handle.clone()));
             app.manage(Project::load(&handle));
 
-            // Reopening the last project is what makes the app feel like it
-            // belongs to the repository rather than the other way round.
-            if let Some(root) = app.state::<Project>().root() {
-                if let Err(err) = project::open(&handle, root) {
-                    eprintln!("diagram-plus: could not reopen the last project: {err}");
-                }
-            }
+            // Nothing is opened here on purpose. The app starts on the welcome
+            // screen every time and works in the folder the user picks in this
+            // session, so it never arrives pointed at someone's old diagrams.
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

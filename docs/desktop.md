@@ -45,9 +45,11 @@ Windows 10 already have it; the installer fetches it if not.
 ## Using it
 
 **Open a project.** The welcome screen asks for a folder. Diagrams live in
-`.diagrams/` inside it, alongside the code they describe. The folder is
-remembered, and the last one reopens on the next launch — the toolbar's project
-button switches to another, and lists the recent ones.
+`.diagrams/` inside it, alongside the code they describe. The app never opens a
+folder by itself — every launch starts on that screen, so a fresh install has no
+project and no diagrams until you choose one. Folders you have opened are listed
+under **Recent** for one click next time, and the toolbar's project button
+switches between them or picks a new one.
 
 **Design, review, edit.** Everything the browser editor does: drag blocks in
 from the palette, connect them, fill in the inspector, check the spec, mark it
