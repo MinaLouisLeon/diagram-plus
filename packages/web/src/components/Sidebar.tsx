@@ -4,7 +4,9 @@ import {
   type BlockType,
   type DiagramSummary,
 } from '@diagram-plus/core/browser';
+import { separator, showContextMenu } from '../context-menu';
 import { store, useEditorState } from '../store';
+import { copyText } from '../text-menu';
 
 /**
  * Left rail: the list of diagrams in the project, and the palette of blocks you
@@ -41,7 +43,15 @@ function DiagramList({ onNewDiagram }: { onNewDiagram: () => void }) {
   const [confirming, setConfirming] = useState<DiagramSummary | null>(null);
 
   return (
-    <>
+    <div
+      className="diagram-list"
+      onContextMenu={(event) => {
+        // The rows answer for themselves; this is the space around them. Text
+        // the user has selected is left to the editing menu.
+        if (event.defaultPrevented || window.getSelection()?.toString()) return;
+        showContextMenu(event, [{ label: 'New diagram…', onSelect: onNewDiagram }]);
+      }}
+    >
       <button className="btn primary" style={{ width: '100%' }} onClick={onNewDiagram}>
         + New diagram
       </button>
@@ -55,6 +65,23 @@ function DiagramList({ onNewDiagram }: { onNewDiagram: () => void }) {
         <div
           key={diagram.slug}
           className={`diagram-row${current?.slug === diagram.slug ? ' active' : ''}`}
+          onContextMenu={(event) =>
+            showContextMenu(event, [
+              { kind: 'heading', label: diagram.name },
+              {
+                label: 'Open',
+                disabled: current?.slug === diagram.slug,
+                onSelect: () => void store.open(diagram.slug),
+              },
+              separator,
+              {
+                label: 'Copy file path',
+                onSelect: () => void copyText(`.diagrams/${diagram.slug}.diagram.json`),
+              },
+              separator,
+              { label: 'Delete…', danger: true, onSelect: () => setConfirming(diagram) },
+            ])
+          }
         >
           <button className="diagram-item" onClick={() => void store.open(diagram.slug)}>
             <strong>{diagram.name}</strong>
@@ -76,7 +103,7 @@ function DiagramList({ onNewDiagram }: { onNewDiagram: () => void }) {
       {confirming ? (
         <DeleteDiagramDialog diagram={confirming} onClose={() => setConfirming(null)} />
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -136,6 +163,20 @@ function Palette() {
     event.dataTransfer.effectAllowed = 'copy';
   };
 
+  const addToCanvas = (type: BlockType) => {
+    const added = store.apply([
+      {
+        op: 'add_block',
+        block: {
+          type,
+          name: BLOCK_CATALOG[type].defaultName,
+          position: { x: 120, y: 120 },
+        },
+      },
+    ])?.createdBlocks[0];
+    if (added) store.select([added.id]);
+  };
+
   return (
     <>
       <p className="hint" style={{ margin: '2px 4px 8px' }}>
@@ -153,16 +194,13 @@ function Palette() {
                 className="palette-item"
                 draggable
                 onDragStart={(event) => onDragStart(event, info.type)}
-                onDoubleClick={() =>
-                  store.apply([
-                    {
-                      op: 'add_block',
-                      block: {
-                        type: info.type,
-                        name: BLOCK_CATALOG[info.type].defaultName,
-                        position: { x: 120, y: 120 },
-                      },
-                    },
+                onDoubleClick={() => addToCanvas(info.type)}
+                onContextMenu={(event) =>
+                  showContextMenu(event, [
+                    { kind: 'heading', label: `${info.icon} ${info.label}` },
+                    { label: 'Add to canvas', onSelect: () => addToCanvas(info.type) },
+                    separator,
+                    { label: 'Copy type name', onSelect: () => void copyText(info.type) },
                   ])
                 }
                 title={info.whenToUse}

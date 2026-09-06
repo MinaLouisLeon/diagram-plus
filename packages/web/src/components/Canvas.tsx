@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type MouseEvent as ReactMouseEvent,
+} from 'react';
 import {
   applyNodeChanges,
   Background,
@@ -23,6 +31,8 @@ import {
   type Diagram,
 } from '@diagram-plus/core/browser';
 import { BlockNode, type BlockFlowNode } from './BlockNode';
+import { separator, showContextMenu } from '../context-menu';
+import { addBlockSubmenu, blockMenu, edgeMenu } from '../menus';
 import { store, useEditorState } from '../store';
 
 /**
@@ -72,7 +82,7 @@ function toEdges(diagram: Diagram, selected: string[]): FlowEdge[] {
 }
 
 function CanvasInner() {
-  const { current, selectedBlocks, selectedEdges } = useEditorState();
+  const { current, selectedBlocks, selectedEdges, catalog } = useEditorState();
   const wrapper = useRef<HTMLDivElement>(null);
   const flow = useReactFlow();
   /** True between the first and last frame of a drag or resize gesture. */
@@ -207,14 +217,12 @@ function CanvasInner() {
     event.dataTransfer.dropEffect = 'copy';
   }, []);
 
-  const onDrop = useCallback(
-    (event: DragEvent) => {
-      event.preventDefault();
-      const type = event.dataTransfer.getData('application/diagram-plus-block') as BlockType;
-      if (!type || !BLOCK_CATALOG[type]) return;
+  /** Drop a new block of `type` centered on a point in screen coordinates. */
+  const addBlockAt = useCallback(
+    (type: BlockType, screen: { x: number; y: number }) => {
       const size = defaultSizeFor(type);
-      const point = flow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
-      store.apply([
+      const point = flow.screenToFlowPosition(screen);
+      return store.apply([
         {
           op: 'add_block',
           block: {
@@ -231,6 +239,113 @@ function CanvasInner() {
     [flow],
   );
 
+  const onDrop = useCallback(
+    (event: DragEvent) => {
+      event.preventDefault();
+      const type = event.dataTransfer.getData('application/diagram-plus-block') as BlockType;
+      if (!type || !BLOCK_CATALOG[type]) return;
+      addBlockAt(type, { x: event.clientX, y: event.clientY });
+    },
+    [addBlockAt],
+  );
+
+  /* ---- context menus ---------------------------------------------------- */
+
+  const onPaneContextMenu = useCallback(
+    (event: ReactMouseEvent | MouseEvent) => {
+      // A node or an edge under the pointer has already answered this click:
+      // the pane sees the same event on its way up.
+      if (event.defaultPrevented || !current) return;
+      const at = { x: event.clientX, y: event.clientY };
+      const blockIds = current.blocks.map((block) => block.id);
+
+      showContextMenu(event, [
+        {
+          label: 'Add block',
+          items: addBlockSubmenu(catalog, (type) => {
+            const added = addBlockAt(type, at)?.createdBlocks[0];
+            if (added) store.select([added.id]);
+          }),
+        },
+        separator,
+        {
+          label: 'Select all blocks',
+          disabled: !blockIds.length,
+          onSelect: () => store.select(blockIds),
+        },
+        {
+          label: 'Clear selection',
+          disabled: !selectedBlocks.length && !selectedEdges.length,
+          onSelect: () => store.select([], []),
+        },
+        separator,
+        {
+          label: 'Tidy up',
+          disabled: !blockIds.length,
+          onSelect: () => store.runLayout('LR'),
+        },
+        {
+          label: 'Fit view',
+          disabled: !blockIds.length,
+          onSelect: () => void flow.fitView({ padding: 0.25, maxZoom: 1 }),
+        },
+        { label: 'Reset zoom', onSelect: () => void flow.zoomTo(1) },
+      ]);
+    },
+    [addBlockAt, catalog, current, flow, selectedBlocks, selectedEdges],
+  );
+
+  /** Right-clicking outside the selection moves it, the way editors do. */
+  const menuTargets = useCallback((id: string): string[] => {
+    const selected = store.getState().selectedBlocks;
+    if (selected.includes(id) && selected.length > 1) return selected;
+    store.select([id]);
+    return [id];
+  }, []);
+
+  const onNodeContextMenu = useCallback(
+    (event: ReactMouseEvent, node: BlockFlowNode) => {
+      if (!current) return;
+      const ids = menuTargets(node.id);
+      showContextMenu(
+        event,
+        blockMenu(current, ids, {
+          onCanvas: true,
+          onCenter: () =>
+            void flow.fitView({ nodes: ids.map((id) => ({ id })), padding: 0.4, maxZoom: 1.2 }),
+        }),
+      );
+    },
+    [current, flow, menuTargets],
+  );
+
+  const onSelectionContextMenu = useCallback(
+    (event: ReactMouseEvent, selection: BlockFlowNode[]) => {
+      if (!current) return;
+      const ids = selection.map((node) => node.id);
+      store.select(ids);
+      showContextMenu(
+        event,
+        blockMenu(current, ids, {
+          onCanvas: true,
+          onCenter: () =>
+            void flow.fitView({ nodes: ids.map((id) => ({ id })), padding: 0.4, maxZoom: 1.2 }),
+        }),
+      );
+    },
+    [current, flow],
+  );
+
+  const onEdgeContextMenu = useCallback(
+    (event: ReactMouseEvent, flowEdge: FlowEdge) => {
+      const edge = current?.edges.find((candidate) => candidate.id === flowEdge.id);
+      if (!current || !edge) return;
+      store.select([], [edge.id]);
+      showContextMenu(event, edgeMenu(current, edge));
+    },
+    [current],
+  );
+
   const hasSavedViewport =
     current !== null && (current.canvas.x !== 0 || current.canvas.y !== 0 || current.canvas.zoom !== 1);
 
@@ -245,6 +360,10 @@ function CanvasInner() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onPaneContextMenu={onPaneContextMenu}
+        onNodeContextMenu={onNodeContextMenu}
+        onSelectionContextMenu={onSelectionContextMenu}
+        onEdgeContextMenu={onEdgeContextMenu}
         // A safety net: if a gesture ends without a final position change —
         // a cancelled drag, a pointer lost outside the window — the flag has
         // to clear anyway, or the canvas would stop taking updates from disk.

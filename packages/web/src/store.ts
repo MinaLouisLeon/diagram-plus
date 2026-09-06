@@ -4,6 +4,7 @@ import {
   autoLayout,
   validateDiagram,
   type BatchOperation,
+  type BatchResult,
   type Diagram,
   type DiagramStatus,
   type DiagramSummary,
@@ -301,9 +302,9 @@ class EditorStore {
    * `history: false` is for high-frequency changes (a drag in progress) that
    * should not each become an undo step.
    */
-  apply(operations: BatchOperation[], options: { history?: boolean } = {}): void {
+  apply(operations: BatchOperation[], options: { history?: boolean } = {}): BatchResult | null {
     const current = this.state.current;
-    if (!current || operations.length === 0) return;
+    if (!current || operations.length === 0) return null;
 
     if (options.history !== false) this.pushHistory();
 
@@ -313,6 +314,7 @@ class EditorStore {
       this.set({ error: result.errors[0]?.message ?? 'Change could not be applied.' });
     }
     this.edit(draft);
+    return result;
   }
 
   /* ---- saving ---------------------------------------------------------- */
@@ -404,6 +406,11 @@ class EditorStore {
 
   setPanel(panel: Panel): void {
     this.set({ panel: this.state.panel === panel ? null : panel });
+  }
+
+  /** Put a message in the notice strip — for failures with no other home. */
+  reportError(message: string): void {
+    this.set({ error: message });
   }
 
   dismissError(): void {
