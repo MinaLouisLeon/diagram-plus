@@ -40,6 +40,8 @@ code they describe.
 
 ## Install
 
+Node 20 or newer, on Windows, macOS or Linux.
+
 ```bash
 git clone https://github.com/MinaLouisLeon/diagram-plus
 cd diagram-plus
@@ -54,22 +56,50 @@ tools — then writes each one's config in its own format.
 ```
   Where should the server be installed?
 
-    1) local   this project only
-    2) global  every project on this machine
+    ( ) local    this project only
+        writes .mcp.json, .cursor/mcp.json and friends into the
+        repository, so anyone who clones it gets the server too
+  > (o) global   every project on this machine
+        writes your user config; terminal tools then pick up the
+        diagrams of whichever project you run them in
 
-  Which tools should get the server?
-
-    1) Claude Code          detected
-    2) Claude Desktop       detected
-    3) Codex CLI            not detected
-    ...
+  up/down move · enter confirms
 ```
+
+```
+  Which tools should get the server? (global install)
+  Detected tools are ticked already.
+
+  > [x] Claude Code          detected
+        ~/.claude.json
+    [ ] Claude Desktop       not detected
+        ~/Library/Application Support/Claude/claude_desktop_config.json
+    [x] Codex CLI            detected
+        ~/.codex/config.toml
+    [x] Cursor               detected
+        ~/.cursor/mcp.json
+    [ ] Windsurf             not detected
+        ~/.codeium/windsurf/mcp_config.json
+    [x] VS Code (Copilot)    detected
+        ~/Library/Application Support/Code/User/settings.json
+    [ ] Gemini CLI           not detected
+        ~/.gemini/settings.json
+
+  up/down move · space toggles · a all · n none · enter confirms
+```
+
+Move with the arrow keys, tick with **space**, confirm with **enter** — the tools it
+detected are ticked for you. **a** ticks everything, **n** clears it, and **escape**
+backs out without writing anything.
 
 It supports **Claude Code**, **Claude Desktop**, **Codex CLI**, **Cursor**,
 **Windsurf**, **VS Code (Copilot)** and **Gemini CLI**. Existing servers in those
 files are left alone, and anything it changes is backed up first.
 
-If the project has not been built yet, it offers to build it for you.
+If the project has not been built yet, the installer offers to build it for you —
+`npm run build:libs`, which is the core, MCP and server packages. The browser editor
+is not part of that: the MCP server does not need it, and leaving it out keeps the
+install off the one build step with platform-specific binaries.
 
 ### Local or global?
 
@@ -94,7 +124,9 @@ npm run install-mcp -- --dry-run --global        # show the changes, write nothi
 npm run install-mcp -- --uninstall --global      # remove it again
 ```
 
-`dgp install-mcp` runs the same installer and takes the same flags. Full reference:
+`dgp install-mcp` runs the same installer and takes the same flags. Without a terminal
+to draw the list in — a pipe, a CI job, some IDE consoles — it asks for numbers
+instead, and `--yes` skips the questions altogether. Full reference:
 [docs/install.md](docs/install.md).
 
 Once it is done, restart the tool it configured, then start the editor from any
@@ -105,6 +137,36 @@ dgp
 ```
 
 It prints a URL — usually <http://localhost:4517>.
+
+### If the install does not go through
+
+**"The MCP server is not built yet" and the build fails.** Whatever npm printed is
+the reason — the installer passes it through rather than summarising it. Run the
+build on its own if you want to iterate on the error:
+
+```bash
+npm run build:libs
+npm run install-mcp
+```
+
+**"Cannot find module @rollup/rollup-win32-x64-msvc"** (or the equivalent for another
+platform) while building or testing. This is [npm's optional-dependency
+bug](https://github.com/npm/cli/issues/4828): the lockfile has the binary, `npm
+install` skips it. It affects the browser editor and the test runner, neither of
+which the MCP server needs, so the install itself still goes through. To fix the
+rest, put the binary back:
+
+```bash
+npm install @rollup/rollup-win32-x64-msvc --no-save --no-package-lock
+```
+
+Or reinstall from scratch: delete `node_modules` and `package-lock.json`, then run
+`npm install` again.
+
+**The build reports success but nothing appears in `dist`.** A leftover
+`tsconfig.tsbuildinfo` is telling tsc that everything is already up to date. Run
+`npm run clean`, then build again. (The installer clears them itself before it
+builds.)
 
 ---
 
@@ -247,9 +309,11 @@ are indistinguishable by the time they reach the file. The server watches
 
 ```bash
 npm install
-npm run build       # core → editor → server → mcp
-npm test            # 100 tests across core, server and mcp
+npm run build       # core → mcp → server → editor
+npm run build:libs  # the same without the editor — all the MCP server needs
+npm test            # 112 tests across core, server and mcp
 npm run typecheck
+npm run clean       # drop every dist/ and tsconfig.tsbuildinfo
 
 # editor with hot reload (needs `dgp` running on 4517 in another terminal)
 npm run dev

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import {
   DiagramNotFoundError,
   DiagramStore,
@@ -20,7 +21,7 @@ describe('the file store', () => {
   it('writes a diagram as readable JSON in .diagrams', async () => {
     const { diagram, file } = await store.create({ name: 'Shop App' });
     expect(diagram.slug).toBe('shop-app');
-    expect(file).toContain('.diagrams/shop-app.diagram.json');
+    expect(file).toContain(path.join('.diagrams', 'shop-app.diagram.json'));
 
     const onDisk = JSON.parse(await readFile(file, 'utf8')) as { name: string; formatVersion: number };
     expect(onDisk.name).toBe('Shop App');

@@ -11,16 +11,26 @@
 
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import readline from 'node:readline/promises';
+import { emitKeypressEvents } from 'node:readline';
 
 const SERVER_NAME = 'diagram-plus';
 const HOME = homedir();
 const PLATFORM = platform();
+const WINDOWS = PLATFORM === 'win32';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * The script that builds everything the MCP server needs: core, mcp, server.
+ * Deliberately not the full `build` — the browser editor is a separate concern
+ * and its bundler brings platform-specific binaries that have nothing to do
+ * with registering a stdio server.
+ */
+const BUILD_SCRIPT = 'build:libs';
 
 /* ------------------------------------------------------------------ *
  * Terminal output
@@ -62,9 +72,55 @@ function isDir(target) {
 
 /** Is this command on PATH? */
 function onPath(command) {
-  const probe = PLATFORM === 'win32' ? 'where' : 'which';
+  const probe = WINDOWS ? 'where' : 'which';
   const result = spawnSync(probe, [command], { stdio: 'ignore' });
   return result.status === 0;
+}
+
+/**
+ * Quote one argument for cmd.exe. Two parsers read this line in turn, so it is
+ * escaped twice: first the way the child's C runtime expects (double the
+ * backslashes that run into a quote, then escape the quote), and then with a
+ * caret in front of every character cmd.exe treats as syntax — the quotes
+ * included, so cmd never enters a quoted state of its own and an `&` in a
+ * project path cannot end up looking like a second command.
+ */
+function quoteForCmd(arg) {
+  const text = String(arg);
+  const quoted =
+    text === ''
+      ? '""'
+      : /[\s"]/.test(text)
+        ? `"${text.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`
+        : text;
+  return quoted.replace(/[()%!^"<>&|]/g, '^$&');
+}
+
+/**
+ * spawnSync that also works on Windows.
+ *
+ * `npm`, `code` and friends are `.cmd` shims there, so plain spawnSync cannot
+ * find them (ENOENT) — and since the fix for CVE-2024-27980 Node refuses to
+ * run a `.cmd` without a shell anyway. Windows therefore goes through cmd.exe
+ * with the arguments quoted for it; everywhere else this is spawnSync.
+ */
+function runCommand(command, args, options = {}) {
+  if (!WINDOWS) return spawnSync(command, args, options);
+  const line = [command, ...args].map(quoteForCmd).join(' ');
+  return spawnSync(line, { ...options, shell: true });
+}
+
+/**
+ * Run an npm script. When npm started this script it exports `npm_execpath`,
+ * and running that file with the node binary already in hand skips the shell
+ * and the PATH lookup entirely — the most reliable route on every platform.
+ */
+function runNpm(args, options = {}) {
+  const execPath = process.env['npm_execpath'];
+  if (execPath && execPath.endsWith('.js') && isFile(execPath)) {
+    return spawnSync(process.execPath, [execPath, ...args], options);
+  }
+  return runCommand('npm', args, options);
 }
 
 function readJson(file) {
@@ -353,24 +409,40 @@ function writeVscodeServers({ file, entryPath, env, remove, dryRun, results }) {
  */
 function writeVscodeSettings({ file, entryPath, env, remove, dryRun, results }) {
   if (remove) {
+    // Two places to look. Recent VS Code keeps MCP servers in User/mcp.json —
+    // which is where `code --add-mcp` puts them, so it is where an install by
+    // this script most likely landed — while older versions read an mcp.servers
+    // key in settings.json. Clean out whichever one actually has the entry.
+    const userMcpJson = path.join(path.dirname(file), 'mcp.json');
+    const viaMcpJson = writeVscodeServers({
+      file: userMcpJson,
+      entryPath,
+      env,
+      remove: true,
+      dryRun,
+      results,
+    });
+
     const { data } = readJson(file);
     const servers = data?.mcp?.servers;
-    if (!servers || !servers[SERVER_NAME]) {
-      return { action: 'manual', detail: `Remove "${SERVER_NAME}" from mcp.servers in ${short(file)}.` };
+    if (servers?.[SERVER_NAME]) {
+      if (!dryRun) {
+        backup(file, results);
+        delete servers[SERVER_NAME];
+        writeJson(file, data);
+      }
+      return { action: 'removed' };
     }
-    if (!dryRun) {
-      backup(file, results);
-      delete servers[SERVER_NAME];
-      writeJson(file, data);
-    }
-    return { action: 'removed' };
+
+    if (viaMcpJson.action === 'removed') return { action: 'removed', detail: short(userMcpJson) };
+    return { action: 'absent' };
   }
 
   const definition = { name: SERVER_NAME, type: 'stdio', ...serverEntry(entryPath, env) };
 
   if (onPath('code')) {
     if (dryRun) return { action: 'added', detail: 'via code --add-mcp' };
-    const result = spawnSync('code', ['--add-mcp', JSON.stringify(definition)], {
+    const result = runCommand('code', ['--add-mcp', JSON.stringify(definition)], {
       stdio: 'ignore',
     });
     if (result.status === 0) return { action: 'added', detail: 'via code --add-mcp' };
@@ -523,16 +595,204 @@ function parseArgs(argv) {
  * Prompts
  * ------------------------------------------------------------------ */
 
-async function ask(rl, question, fallback) {
-  const answer = (await rl.question(`${question} ${dim(`[${fallback}]`)} `)).trim();
+/**
+ * One readline interface per question. The list picker below drives stdin in
+ * raw mode, and two things reading the same terminal at once is how prompts
+ * start swallowing each other's keystrokes — so nothing holds it open between
+ * questions.
+ */
+async function question(text) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return (await rl.question(text)).trim();
+  } finally {
+    rl.close();
+  }
+}
+
+async function ask(prompt, fallback) {
+  const answer = await question(`${prompt} ${dim(`[${fallback}]`)} `);
   return answer || fallback;
 }
 
-async function confirm(rl, question, fallback = true) {
+async function confirm(prompt, fallback = true) {
   const hint = fallback ? 'Y/n' : 'y/N';
-  const answer = (await rl.question(`${question} ${dim(`(${hint})`)} `)).trim().toLowerCase();
+  const answer = (await question(`${prompt} ${dim(`(${hint})`)} `)).toLowerCase();
   if (!answer) return fallback;
   return answer.startsWith('y');
+}
+
+/* ------------------------------------------------------------------ *
+ * The list picker
+ * ------------------------------------------------------------------ *
+ *
+ * Arrow keys to move, space to tick, enter to confirm. Needs a real terminal
+ * it can put into raw mode; every caller falls back to a typed answer when
+ * `canPick()` says no (a pipe, a CI job, some IDE consoles).
+ */
+
+const HIDE_CURSOR = `${ESC}?25l`;
+const SHOW_CURSOR = `${ESC}?25h`;
+const CLEAR_LINE = `${ESC}2K`;
+
+function canPick() {
+  return Boolean(
+    process.stdin.isTTY && process.stdout.isTTY && typeof process.stdin.setRawMode === 'function',
+  );
+}
+
+/**
+ * Join styled segments into a line no wider than the terminal. Truncating the
+ * plain text before painting it keeps escape codes intact — and keeps every
+ * frame exactly one terminal row per line, which is what lets the redraw below
+ * count on moving up a fixed number of rows.
+ */
+function fit(segments, width) {
+  let used = 0;
+  let line = '';
+  for (const [text, style] of segments) {
+    if (used >= width) break;
+    const piece = text.length > width - used ? text.slice(0, width - used) : text;
+    line += style ? style(piece) : piece;
+    used += piece.length;
+  }
+  return line;
+}
+
+/**
+ * Show a list and return the chosen items, or null if the user backed out with
+ * escape. `multiple` gives checkboxes; otherwise it is a radio list.
+ *
+ * Items are `{ label, note, lines, value }` — `note` is `[text, style]`, and
+ * `lines` are dim detail rows shown under the label.
+ */
+function pick({ items, selected = [], multiple = false }) {
+  return new Promise((resolve) => {
+    const out = process.stdout;
+    const stdin = process.stdin;
+    const chosen = new Set(selected);
+    let cursor = items.length ? Math.min(...(chosen.size ? [...chosen] : [0])) : 0;
+    let height = 0;
+
+    const help = multiple
+      ? 'up/down move · space toggles · a all · n none · enter confirms'
+      : 'up/down move · enter confirms';
+
+    const pad = Math.max(...items.map((item) => item.label.length)) + 2;
+
+    const draw = () => {
+      const width = Math.max(40, (out.columns ?? 80) - 1);
+      const lines = [];
+
+      items.forEach((item, index) => {
+        const active = index === cursor;
+        const ticked = chosen.has(index);
+        const box = multiple ? (ticked ? '[x]' : '[ ]') : ticked ? '(o)' : '( )';
+        const [note, noteStyle] = item.note ?? ['', dim];
+        lines.push(
+          fit(
+            [
+              ['  ', null],
+              [active ? '>' : ' ', blue],
+              [' ', null],
+              [box, ticked ? green : dim],
+              [' ', null],
+              [item.label.padEnd(pad), active ? bold : null],
+              [note ? ` ${note}` : '', noteStyle],
+            ],
+            width,
+          ),
+        );
+        for (const detail of item.lines ?? []) {
+          lines.push(fit([['        ', null], [detail, dim]], width));
+        }
+      });
+
+      lines.push('');
+      lines.push(fit([['  ', null], [help, dim]], width));
+
+      let frame = height ? `${ESC}${height}A` : '';
+      for (const line of lines) frame += `${CLEAR_LINE}${line}\n`;
+      height = lines.length;
+      out.write(frame);
+    };
+
+    const release = () => {
+      stdin.off('keypress', onKey);
+      if (stdin.isTTY) stdin.setRawMode(false);
+      stdin.pause();
+      out.write(SHOW_CURSOR);
+    };
+
+    const onKey = (_char, key = {}) => {
+      if (key.ctrl && key.name === 'c') {
+        release();
+        out.write('\n');
+        process.exit(130);
+      }
+
+      switch (key.name) {
+        case 'up':
+        case 'k':
+          cursor = (cursor - 1 + items.length) % items.length;
+          break;
+        case 'down':
+        case 'j':
+        case 'tab':
+          cursor = (cursor + 1) % items.length;
+          break;
+        case 'home':
+          cursor = 0;
+          break;
+        case 'end':
+          cursor = items.length - 1;
+          break;
+        case 'space':
+          if (!multiple) chosen.clear();
+          if (multiple && chosen.has(cursor)) chosen.delete(cursor);
+          else chosen.add(cursor);
+          break;
+        case 'a':
+          if (!multiple) return;
+          items.forEach((_item, index) => chosen.add(index));
+          break;
+        case 'n':
+          if (!multiple) return;
+          chosen.clear();
+          break;
+        case 'return':
+        case 'enter':
+          if (!multiple) {
+            chosen.clear();
+            chosen.add(cursor);
+          }
+          draw();
+          release();
+          resolve([...chosen].sort((a, b) => a - b).map((index) => items[index]));
+          return;
+        case 'escape':
+          draw();
+          release();
+          resolve(null);
+          return;
+        default:
+          return;
+      }
+      draw();
+    };
+
+    if (!items.length) {
+      resolve([]);
+      return;
+    }
+
+    emitKeypressEvents(stdin);
+    if (stdin.isTTY) stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on('keypress', onKey);
+    out.write(HIDE_CURSOR);
+    draw();
+  });
 }
 
 /** "1,3" / "all" / "" -> the chosen clients. */
@@ -560,7 +820,7 @@ function parseSelection(answer, offered, defaults) {
  * Build check
  * ------------------------------------------------------------------ */
 
-async function ensureBuilt(entryPath, { rl, yes, noBuild, dryRun }) {
+async function ensureBuilt(entryPath, { interactive, yes, noBuild, dryRun }) {
   if (isFile(entryPath)) return true;
 
   const repoRoot = resolveRepoRoot();
@@ -572,22 +832,46 @@ async function ensureBuilt(entryPath, { rl, yes, noBuild, dryRun }) {
     return true;
   }
   if (!repoRoot || noBuild) {
-    fail('Run `npm run build` in the diagram-plus repository first.');
+    fail(`Run \`npm run ${BUILD_SCRIPT}\` in the diagram-plus repository first.`);
     return false;
   }
 
-  const shouldBuild = yes || !rl || (await confirm(rl, '  Build it now?', true));
+  const shouldBuild = yes || !interactive || (await confirm('  Build it now?', true));
   if (!shouldBuild) {
-    fail('Nothing installed. Run `npm run build`, then try again.');
+    fail(`Nothing installed. Run \`npm run ${BUILD_SCRIPT}\`, then try again.`);
     return false;
   }
 
-  say(dim('  Building (this takes a few seconds)...'));
-  const result = spawnSync('npm', ['run', 'build'], { cwd: repoRoot, stdio: 'inherit' });
-  if (result.status !== 0 || !isFile(entryPath)) {
-    fail('The build failed. Fix it, then run this again.');
+  // tsc builds incrementally. If dist was deleted but the .tsbuildinfo beside
+  // it survived, tsc decides everything is up to date and emits nothing — the
+  // build "succeeds" and the file we are waiting for never appears. Since we
+  // are only here because dist is missing, drop those first.
+  for (const pkg of ['core', 'mcp', 'server']) {
+    const stale = path.join(repoRoot, 'packages', pkg, 'tsconfig.tsbuildinfo');
+    if (isFile(stale)) rmSync(stale, { force: true });
+  }
+
+  say(dim(`  Building (npm run ${BUILD_SCRIPT} — this takes a few seconds)...`));
+  const result = runNpm(['run', BUILD_SCRIPT], { cwd: repoRoot, stdio: 'inherit' });
+
+  // Say which of the three ways this can go wrong actually happened: a bare
+  // "the build failed" after a build that printed nothing sends people looking
+  // for a compile error that is not there.
+  if (result.error) {
+    fail(`Could not start npm (${result.error.code ?? result.error.message}).`);
+    say(dim(`  Run \`npm run ${BUILD_SCRIPT}\` in ${short(repoRoot)} yourself, then run this again.`));
     return false;
   }
+  if (result.status !== 0) {
+    fail(`\`npm run ${BUILD_SCRIPT}\` exited with code ${result.status}. Fix the errors above, then run this again.`);
+    return false;
+  }
+  if (!isFile(entryPath)) {
+    fail(`The build finished, but ${short(entryPath)} is still missing.`);
+    say(dim('  Check that the build wrote to packages/mcp/dist, then run this again.'));
+    return false;
+  }
+
   say(`${green('OK')} Built.`);
   return true;
 }
@@ -654,7 +938,6 @@ async function main() {
   const dryRun = Boolean(flags['dry-run']);
   const uninstall = Boolean(flags.uninstall);
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY) && !flags.yes;
-  const rl = interactive ? readline.createInterface({ input: process.stdin, output: process.stdout }) : null;
 
   try {
     say();
@@ -675,22 +958,50 @@ async function main() {
     }
 
     if (!scope) {
-      if (!rl) {
+      if (!interactive) {
         fail('No scope given. Pass --local or --global (or run this in a terminal to be asked).');
         return 1;
       }
       say(bold('  Where should the server be installed?'));
       say();
-      say(`    ${bold('1) local')}   this project only`);
-      say(dim(`               writes .mcp.json, .cursor/mcp.json and friends into the`));
-      say(dim(`               repository, so anyone who clones it gets the server too`));
-      say();
-      say(`    ${bold('2) global')}  every project on this machine`);
-      say(dim(`               writes your user config; terminal tools then pick up the`));
-      say(dim(`               diagrams of whichever project you run them in`));
-      say();
-      const answer = await ask(rl, '  Choose 1 or 2', '2');
-      scope = answer.startsWith('1') || answer.toLowerCase().startsWith('l') ? 'local' : 'global';
+
+      const scopes = [
+        {
+          label: 'local',
+          note: ['this project only', dim],
+          lines: [
+            'writes .mcp.json, .cursor/mcp.json and friends into the',
+            'repository, so anyone who clones it gets the server too',
+          ],
+          value: 'local',
+        },
+        {
+          label: 'global',
+          note: ['every project on this machine', dim],
+          lines: [
+            'writes your user config; terminal tools then pick up the',
+            'diagrams of whichever project you run them in',
+          ],
+          value: 'global',
+        },
+      ];
+
+      if (canPick()) {
+        const picked = await pick({ items: scopes, selected: [1] });
+        if (!picked?.length) {
+          say(dim('  Cancelled.'));
+          return 0;
+        }
+        scope = picked[0].value;
+      } else {
+        scopes.forEach((item, index) => {
+          say(`    ${bold(`${index + 1}) ${item.label}`)}  ${item.note[0]}`);
+          for (const line of item.lines) say(dim(`       ${line}`));
+          say();
+        });
+        const answer = await ask('  Choose 1 or 2', '2');
+        scope = answer.startsWith('1') || answer.toLowerCase().startsWith('l') ? 'local' : 'global';
+      }
       say();
     }
 
@@ -704,9 +1015,9 @@ async function main() {
     // A local install needs the project up front, because it decides where every
     // config file goes. A global install only needs one if a desktop app is
     // picked, so that question waits until we know what was selected.
-    if (scope === 'local' && rl && !projectGiven) {
+    if (scope === 'local' && interactive && !projectGiven) {
       say(bold('  Which project is this for?'));
-      project = path.resolve(await ask(rl, ' ', project));
+      project = path.resolve(await ask(' ', project));
       say();
     }
     if (scope === 'local' && !isDir(project)) {
@@ -746,10 +1057,32 @@ async function main() {
       if (!flags.all && detected.length === 0) {
         warn('None of the supported tools were detected on this machine.');
         say(dim('  Pass --all to configure them anyway, or --list to see what is supported.'));
-        if (!rl) return 1;
+        if (!interactive) return 1;
       }
 
-      if (rl) {
+      if (interactive && canPick()) {
+        say(bold(`  Which tools should get the server? ${dim(`(${scope} install)`)}`));
+        say(dim('  Detected tools are ticked already.'));
+        say();
+        const items = offered.map((client) => ({
+          label: client.label,
+          note: client.detect() ? ['detected', green] : ['not detected', dim],
+          lines: [short(targetFor(client, scopeKey, ctx).file)],
+          value: client,
+        }));
+        const picked = await pick({
+          items,
+          selected: defaults.map((client) => offered.indexOf(client)),
+          multiple: true,
+        });
+        if (picked === null) {
+          say(dim('  Cancelled.'));
+          return 0;
+        }
+        selection = picked.map((item) => item.value);
+        say();
+      } else if (interactive) {
+        // No raw-mode terminal to draw a list on — ask for numbers instead.
         say(bold(`  Which tools should get the server? ${dim(`(${scope} install)`)}`));
         say();
         offered.forEach((client, index) => {
@@ -763,7 +1096,7 @@ async function main() {
           ? 'all'
           : defaults.map((c) => String(offered.indexOf(c) + 1)).join(',') || 'all';
         say(dim('  Numbers separated by commas, or "all", or "none".'));
-        const answer = await ask(rl, '  Install to', fallback);
+        const answer = await ask('  Install to', fallback);
         selection = parseSelection(answer, offered, defaults);
         say();
       } else {
@@ -779,11 +1112,11 @@ async function main() {
     /* ---- 4. a project path for the desktop apps, if any ------------ */
 
     const pinning = selection.filter((client) => scope === 'local' || client.pinsRoot);
-    if (scope === 'global' && pinning.length && rl && !projectGiven) {
+    if (scope === 'global' && pinning.length && interactive && !projectGiven) {
       const names = pinning.map((c) => c.label).join(', ');
       say(`  ${names} ${pinning.length === 1 ? 'is a desktop app and has' : 'are desktop apps and have'} no working directory,`);
       say('  so they need a project pinned in. Which project should they open?');
-      project = path.resolve(await ask(rl, ' ', project));
+      project = path.resolve(await ask(' ', project));
       ctx.project = project;
       say();
     }
@@ -797,7 +1130,7 @@ async function main() {
     const entryPath = resolveServerEntry();
     if (!uninstall) {
       const ready = await ensureBuilt(entryPath, {
-        rl,
+        interactive,
         yes: Boolean(flags.yes),
         noBuild: Boolean(flags['no-build']),
         dryRun,
@@ -819,8 +1152,8 @@ async function main() {
     }
     say();
 
-    if (rl && !dryRun) {
-      if (!(await confirm(rl, '  Go ahead?', true))) {
+    if (interactive && !dryRun) {
+      if (!(await confirm('  Go ahead?', true))) {
         say(dim('  Cancelled.'));
         return 0;
       }
@@ -893,7 +1226,7 @@ async function main() {
 
     return results.rows.some((r) => r.action === 'failed') ? 1 : 0;
   } finally {
-    rl?.close();
+    if (process.stdin.isTTY) process.stdout.write(SHOW_CURSOR);
   }
 }
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -7,21 +7,57 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * The installer is exercised as a subprocess with a sandboxed HOME, because
+ * The installer is exercised as a subprocess with a sandboxed home, because
  * what matters is the bytes it leaves in each tool's config file — including
  * that it leaves everyone else's entries alone.
+ *
+ * The sandbox has to cover every variable the installer reads a config path
+ * from, which on Windows means APPDATA as well as USERPROFILE. It also runs
+ * with an empty PATH: without one the installer finds no `code` to shell out
+ * to, so no test can reach past the sandbox into the real VS Code.
  */
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const SCRIPT = path.join(REPO, 'packages', 'server', 'install-mcp.mjs');
 const MCP_ENTRY = path.join(REPO, 'packages', 'mcp', 'dist', 'bin.js');
+const WINDOWS = process.platform === 'win32';
 
 let home: string;
 let project: string;
 
+/** Where each desktop app keeps its config inside the sandbox. */
+function claudeDesktopConfig(): string {
+  if (process.platform === 'darwin') {
+    return path.join(home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
+  }
+  if (WINDOWS) return path.join(home, 'AppData', 'Roaming', 'Claude', 'claude_desktop_config.json');
+  return path.join(home, '.config', 'Claude', 'claude_desktop_config.json');
+}
+
+function vscodeUserSettings(): string {
+  if (process.platform === 'darwin') {
+    return path.join(home, 'Library', 'Application Support', 'Code', 'User', 'settings.json');
+  }
+  if (WINDOWS) return path.join(home, 'AppData', 'Roaming', 'Code', 'User', 'settings.json');
+  return path.join(home, '.config', 'Code', 'User', 'settings.json');
+}
+
 function run(args: string[]): { status: number; stdout: string } {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key.toUpperCase() !== 'PATH') env[key] = value;
+  }
+
   const result = spawnSync(process.execPath, [SCRIPT, ...args], {
-    env: { ...process.env, HOME: home, USERPROFILE: home, NO_COLOR: '1' },
+    env: {
+      ...env,
+      PATH: '',
+      HOME: home,
+      USERPROFILE: home,
+      APPDATA: path.join(home, 'AppData', 'Roaming'),
+      LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
+      NO_COLOR: '1',
+    },
     encoding: 'utf8',
   });
   return { status: result.status ?? 1, stdout: `${result.stdout}${result.stderr}` };
@@ -31,8 +67,9 @@ const readJson = (file: string) => JSON.parse(readFileSync(file, 'utf8')) as Rec
 
 beforeAll(() => {
   // The installer registers a path to the built server, so it has to exist.
+  // Through a shell, because npm is a .cmd shim on Windows.
   if (!existsSync(MCP_ENTRY)) {
-    execFileSync('npm', ['run', 'build', '-w', '@diagram-plus/mcp'], { cwd: REPO, stdio: 'ignore' });
+    spawnSync('npm run build -w @diagram-plus/mcp', { cwd: REPO, stdio: 'ignore', shell: true });
   }
 }, 120_000);
 
@@ -89,8 +126,7 @@ describe('the installer', () => {
     expect(claudeCode.env).toBeUndefined();
 
     // Claude Desktop has no working directory, so the project is baked in.
-    const desktopConfig = path.join(home, '.config', 'Claude', 'claude_desktop_config.json');
-    expect(readJson(desktopConfig).mcpServers['diagram-plus'].env.DIAGRAM_PLUS_ROOT).toBe(project);
+    expect(readJson(claudeDesktopConfig()).mcpServers['diagram-plus'].env.DIAGRAM_PLUS_ROOT).toBe(project);
   });
 
   it('keeps other people\'s servers and unrelated settings', () => {
@@ -154,7 +190,7 @@ describe('the installer', () => {
   });
 
   it('refuses to rewrite VS Code user settings and hands over a snippet instead', () => {
-    const settings = path.join(home, '.config', 'Code', 'User', 'settings.json');
+    const settings = vscodeUserSettings();
     mkdirSync(path.dirname(settings), { recursive: true });
     writeFileSync(settings, '{\n  // a comment the user wants to keep\n  "editor.fontSize": 13\n}');
 

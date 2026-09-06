@@ -21,9 +21,21 @@ runs before anything is built — and offers to build for you if it needs to.
 
 ² VS Code user settings are JSONC, and rewriting that file would strip your comments.
 The installer uses `code --add-mcp` when VS Code is on your PATH, and otherwise prints
-the exact snippet for you to paste. It never rewrites the file itself.
+the exact snippet for you to paste. It never rewrites the file itself. Recent VS Code
+versions keep what `--add-mcp` writes in `User/mcp.json` rather than in the settings
+file; `--uninstall` clears the entry out of both.
 
 Run `--list` to see the same table with detection results for your machine.
+
+## Answering the questions
+
+In a terminal the installer draws a list: arrow keys move, **space** ticks a tool,
+**enter** confirms, **a** ticks everything, **n** clears it, and **escape** backs out
+without writing anything. The tools it detected are ticked to begin with.
+
+When there is no terminal to draw on — a pipe, a CI job, some IDE consoles — it falls
+back to asking for numbers ("1,3", "all", "none"). `--yes` and `--clients` skip the
+questions entirely, which is what you want in a script.
 
 ## Local or global
 
@@ -89,8 +101,16 @@ and open the editor with `dgp` to review what it draws.
 startup. Quit it fully and reopen — for desktop apps that means quitting the
 application, not just closing the window.
 
-**"The MCP server is not built yet".** Run `npm run build` in the diagram-plus
-repository. The installer offers to do this for you when it is run from a checkout.
+**"The MCP server is not built yet".** Run `npm run build:libs` in the diagram-plus
+repository. The installer offers to do this for you when it is run from a checkout,
+and it builds only the core, MCP and server packages — the browser editor is not
+needed to register a stdio server.
+
+**The build it offered to run failed.** Whatever npm printed is the reason; the
+installer passes it straight through. Run `npm run build:libs` yourself if you want
+to iterate on it. If the build reports success but the server still is not there, a
+stale `tsconfig.tsbuildinfo` is convincing tsc there is nothing to do — `npm run
+clean` and build again.
 
 **The server starts but finds no diagrams.** It resolves the project from
 `DIAGRAM_PLUS_ROOT`, or from the working directory when that is unset. Check the path

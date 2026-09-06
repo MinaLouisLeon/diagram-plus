@@ -18,7 +18,7 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "test:watch": "vitest",
-    "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo",
+    "clean": "node -e \"const fs=require('node:fs');for(const p of ['core','server','mcp','web']){fs.rmSync('packages/'+p+'/dist',{recursive:true,force:true});fs.rmSync('packages/'+p+'/tsconfig.tsbuildinfo',{force:true});}\"",
     "install-mcp": "node packages/server/install-mcp.mjs"
   },
   "devDependencies": {
