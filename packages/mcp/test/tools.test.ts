@@ -298,3 +298,62 @@ describe('reading', () => {
     expect(text).toContain('http://localhost:4517/d/reader');
   });
 });
+
+describe('rejecting a bad payload', () => {
+  /** The whole design arrives in one call, so a rejection has to be recoverable. */
+  const goodBlock = { type: 'data_model' as const, name: 'Account' };
+  const badBlock = {
+    type: 'api_endpoint' as const,
+    name: 'CreateAccount',
+    // `body` is a list of fields, not a string — the mistake the hint invites.
+    data: { method: 'POST', responses: [{ status: 201, description: 'Created', body: 'Account' }] },
+  };
+
+  it('names the block that was rejected, and what the field wanted', async () => {
+    const { text, isError } = await call('create_diagram_from_outline', {
+      name: 'Billing',
+      blocks: [goodBlock, badBlock],
+    });
+
+    expect(isError).toBe(true);
+    expect(text).toContain('Block 2 of 2');
+    expect(text).toContain('CreateAccount');
+    expect(text).toContain('api_endpoint');
+    expect(text).toContain('responses[0].body');
+    expect(text).toContain('expected array, received string');
+  });
+
+  it('leaves no diagram behind, so the same name is free on the retry', async () => {
+    await call('create_diagram_from_outline', { name: 'Billing', blocks: [badBlock] });
+    expect((await store.list()).length).toBe(0);
+
+    const retry = await call('create_diagram_from_outline', {
+      name: 'Billing',
+      blocks: [goodBlock],
+    });
+    expect(retry.isError).toBeFalsy();
+    // Not "billing-2": the failed attempt did not squat on the slug.
+    expect(retry.text).toContain('(billing)');
+  });
+
+  it('still reports the schema failure rather than swallowing it', async () => {
+    const { text, isError } = await call('add_blocks', { diagram: 'nope', blocks: [badBlock] });
+    expect(isError).toBe(true);
+    expect(text).not.toContain('[object Object]');
+  });
+});
+
+describe('payload hints', () => {
+  it('spells out nested lists so they are not mistaken for strings', async () => {
+    const tool = (await client.listTools()).tools.find(
+      (t) => t.name === 'create_diagram_from_outline',
+    );
+    const description = tool?.description ?? '';
+
+    // Both traps found while testing: a bare `body`/`params` reads like a string.
+    expect(description).toContain('body: [{ name, type, required, description, example }]');
+    expect(description).toContain('params: [{ name, type, required, description, example }]');
+    // And config really does take `keys`, not `entries`.
+    expect(description).toMatch(/config — .*keys: \[\{ name, description, required, secret, example \}\]/);
+  });
+});

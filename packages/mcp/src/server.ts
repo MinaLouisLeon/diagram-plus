@@ -10,6 +10,7 @@ import {
   buildOrder,
   deleteBlocks,
   deleteEdges,
+  describeSchemaError,
   diagramStats,
   exportDiagram,
   findBlock,
@@ -66,7 +67,7 @@ function block(title: string, body: string, lang = 'json'): string {
 }
 
 function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return describeSchemaError(err);
 }
 
 /** One-line state of the diagram, appended after every mutation. */
@@ -414,6 +415,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       },
     },
     async (args) => {
+      let createdSlug: string | null = null;
       try {
         const { diagram: created } = await store.create({
           name: args.name,
@@ -422,6 +424,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
           techStack: args.techStack,
           notes: args.notes,
         });
+        createdSlug = created.slug;
         const { diagram } = await store.update(created.slug, (draft) => {
           addBlocks(draft, args.blocks);
           addEdges(draft, args.edges ?? []);
@@ -433,6 +436,13 @@ export function createMcpServer(options: McpServerOptions): McpServer {
             'Tell the user they can open that URL to review and edit the diagram.',
         );
       } catch (err) {
+        // The diagram is written before its blocks are, so a rejected block
+        // payload would otherwise strand an empty shell on disk — and take the
+        // good name with it, pushing the retry to "…-2". Roll it back so the
+        // caller can fix the payload and use the same name again.
+        if (createdSlug) {
+          await store.delete(createdSlug).catch(() => undefined);
+        }
         return fail(errorMessage(err));
       }
     },

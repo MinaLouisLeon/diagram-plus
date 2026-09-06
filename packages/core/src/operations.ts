@@ -11,7 +11,7 @@ import {
   type CreateGroupInput,
 } from './factory.js';
 import { nowIso } from './ids.js';
-import type { ImplementationStatus } from './common.js';
+import { describeSchemaError, type ImplementationStatus } from './common.js';
 
 /**
  * Mutation primitives.
@@ -42,7 +42,20 @@ export interface BlockPatch {
 }
 
 export function addBlocks(diagram: Diagram, inputs: CreateBlockInput[]): Block[] {
-  const created = inputs.map((input) => createBlock(input));
+  const created = inputs.map((input, index) => {
+    try {
+      return createBlock(input);
+    } catch (err) {
+      // A whole design arrives in one call, so an unattributed schema error
+      // leaves the caller re-reading seventeen payloads to find the bad one.
+      // Name the block before rethrowing.
+      throw new Error(
+        `Block ${index + 1} of ${inputs.length} ` +
+          `("${input.name ?? 'unnamed'}", type ${input.type}) was rejected — ` +
+          describeSchemaError(err),
+      );
+    }
+  });
   diagram.blocks.push(...created);
   return created;
 }

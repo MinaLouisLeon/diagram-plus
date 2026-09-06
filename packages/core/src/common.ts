@@ -81,3 +81,29 @@ export const ImplementationSchema = z.object({
   updatedAt: z.string().default(''),
 });
 export type Implementation = z.infer<typeof ImplementationSchema>;
+
+/**
+ * Turn a schema failure into something a reader can act on.
+ *
+ * Zod's own `message` is the JSON-stringified issue array, which is unreadable
+ * in a tool response and buries the one thing that matters: which field was
+ * wrong, and what it should have been.
+ */
+export function describeSchemaError(err: unknown): string {
+  if (!(err instanceof z.ZodError)) {
+    return err instanceof Error ? err.message : String(err);
+  }
+  return err.issues
+    .map((issue) => {
+      const path = issue.path
+        .map((seg) => (typeof seg === 'number' ? `[${seg}]` : `.${seg}`))
+        .join('')
+        .replace(/^\./, '');
+      const where = path ? `\`${path}\`` : 'the payload';
+      if (issue.code === 'invalid_type') {
+        return `${where}: expected ${issue.expected}, received ${issue.received}`;
+      }
+      return `${where}: ${issue.message}`;
+    })
+    .join('; ');
+}

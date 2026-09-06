@@ -14,12 +14,32 @@ import {
  * `data` without a round-trip to `describe_block_schema` first.
  */
 
-function fieldHint(field: FieldDescriptor): string {
+/**
+ * How a field reads *inside* a record list.
+ *
+ * Scalars stay bare keys to keep these lines short, but a nested list has to
+ * show its shape: written as a plain `body` or `params` it reads like a string,
+ * and the payload is then rejected for the one field the hint did not explain.
+ */
+function nestedFieldHint(field: FieldDescriptor): string {
   switch (field.kind) {
     case 'stringList':
       return `${field.key}: string[]`;
     case 'recordList': {
       const inner = (field.fields ?? []).map((f) => f.key).join(', ');
+      return `${field.key}: [{ ${inner} }]`;
+    }
+    default:
+      return field.key;
+  }
+}
+
+function fieldHint(field: FieldDescriptor): string {
+  switch (field.kind) {
+    case 'stringList':
+      return `${field.key}: string[]`;
+    case 'recordList': {
+      const inner = (field.fields ?? []).map(nestedFieldHint).join(', ');
       return `${field.key}: [{ ${inner} }]`;
     }
     case 'boolean':
