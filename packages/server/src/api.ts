@@ -10,15 +10,19 @@ import {
   assignDiagramContent,
   autoLayout,
   buildOrder,
+  buildProjectTree,
   catalogList,
   diagramStats,
   exportDiagram,
   generateSpec,
   importDiagram,
+  isExportFormat,
+  parseTreeOptions,
   safeParseDiagram,
   validateDiagram,
   type BatchOperation,
   type Diagram,
+  type ExportFormat,
 } from '@diagram-plus/core';
 import { HttpError, RawResponse, Router } from './http.js';
 
@@ -290,16 +294,29 @@ export function createApiRouter(options: ApiOptions): Router {
 
   router.get('/api/diagrams/:slug/export', async (ctx) => {
     const format = ctx.query.get('format') ?? 'mermaid';
-    if (!['mermaid', 'markdown', 'json'].includes(format)) {
+    if (!isExportFormat(format)) {
       throw new HttpError(400, `Unknown export format "${format}".`);
     }
     const diagram = await read(ctx.params['slug']!);
-    const content = exportDiagram(diagram, format as 'mermaid' | 'markdown' | 'json');
+    const content = exportDiagram(
+      diagram,
+      format as ExportFormat,
+      parseTreeOptions((key) => ctx.query.get(key)),
+    );
     if (ctx.query.get('download') === 'true') {
       const type = format === 'json' ? 'application/json' : 'text/plain';
       return new RawResponse(content, `${type}; charset=utf-8`);
     }
     return { format, content };
+  });
+
+  /**
+   * The client view as data rather than as text, so the editor can draw it as
+   * a real tree — collapsible, and clickable back onto the canvas.
+   */
+  router.get('/api/diagrams/:slug/tree', async (ctx) => {
+    const diagram = await read(ctx.params['slug']!);
+    return { tree: buildProjectTree(diagram, parseTreeOptions((key) => ctx.query.get(key))) };
   });
 
   return router;

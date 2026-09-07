@@ -129,6 +129,43 @@ describe('the REST API', () => {
     expect(status).toBe(400);
   });
 
+  it('exports the client view, with the plumbing folded away', async () => {
+    const { body } = await call<{ content: string }>(
+      'GET',
+      '/api/diagrams/api-test/export?format=tree',
+    );
+    expect(body.content).toContain('Things');
+    // The data model is behind a `reads`, which a client does not need to see.
+    expect(body.content).not.toContain('pieces of information');
+
+    const withData = await call<{ content: string }>(
+      'GET',
+      '/api/diagrams/api-test/export?format=tree&data=true',
+    );
+    expect(withData.body.content).toContain('Thing');
+  });
+
+  it('serves the client view as data, shaped by query parameters', async () => {
+    const plain = await call<{ tree: { roots: unknown[]; audience: string; omitted: unknown[] } }>(
+      'GET',
+      '/api/diagrams/api-test/tree',
+    );
+    expect(plain.body.tree.audience).toBe('client');
+    expect(plain.body.tree.roots).toHaveLength(1);
+
+    const technical = await call<{ tree: { audience: string } }>(
+      'GET',
+      '/api/diagrams/api-test/tree?audience=technical',
+    );
+    expect(technical.body.tree.audience).toBe('technical');
+
+    const filtered = await call<{ tree: { omitted: { name: string }[] } }>(
+      'GET',
+      '/api/diagrams/api-test/tree?data=true&types=ui_screen',
+    );
+    expect(filtered.body.tree.omitted.map((o) => o.name)).toContain('Thing');
+  });
+
   it('replaces a whole diagram, which is how undo works', async () => {
     const before = await call<{ diagram: Record<string, unknown> }>('GET', '/api/diagrams/api-test');
     const snapshot = { ...before.body.diagram, blocks: [], edges: [] };

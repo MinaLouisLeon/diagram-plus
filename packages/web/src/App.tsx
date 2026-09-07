@@ -4,6 +4,7 @@ import { Inspector } from './components/Inspector';
 import { Sidebar } from './components/Sidebar';
 import { Toolbar } from './components/Toolbar';
 import { BottomPanel } from './components/Panels';
+import { TreePresentation } from './components/ClientView';
 import { ImportDialog } from './components/ImportDialog';
 import { NewDiagramDialog } from './components/NewDiagramDialog';
 import { McpSettings } from './components/McpSettings';
@@ -165,6 +166,7 @@ export function App() {
       </div>
       {dialogOpen ? <NewDiagramDialog onClose={() => setDialogOpen(false)} /> : null}
       {settingsOpen ? <McpSettings onClose={() => setSettingsOpen(false)} /> : null}
+      <TreePresentation />
       <ImportDialog />
       <UnsavedDialog />
     </div>

@@ -19,5 +19,7 @@ export * from './store-base.js';
 export * from './layout.js';
 export * from './analysis.js';
 export * from './spec.js';
+export * from './tree.js';
+export * from './tree-render.js';
 export * from './export.js';
 export * from './transfer.js';

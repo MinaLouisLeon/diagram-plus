@@ -95,6 +95,13 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
             Spec
           </button>
           <button
+            className={`btn${panel === 'tree' ? ' primary' : ''}`}
+            onClick={() => store.setPanel('tree')}
+            title="The diagram as a plain tree — what to show a non-technical reviewer"
+          >
+            Client view
+          </button>
+          <button
             className={`btn${dirty ? ' primary' : ''}`}
             disabled={!dirty || saving}
             onClick={() => void store.save()}
@@ -145,6 +152,20 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
               hint: diagrams.length ? undefined : 'None in this project',
               disabled: diagrams.length === 0,
               onSelect: () => void store.exportAll(),
+            },
+            separator,
+            { kind: 'heading', label: 'Share the client view' },
+            {
+              label: 'Save as Markdown…',
+              hint: current ? undefined : 'No diagram open',
+              disabled: !current,
+              onSelect: () => void store.exportTree('tree-markdown'),
+            },
+            {
+              label: 'Save as plain text…',
+              hint: current ? undefined : 'No diagram open',
+              disabled: !current,
+              onSelect: () => void store.exportTree('tree'),
             },
             separator,
             { label: 'Import from a file…', onSelect: () => void store.beginImport() },

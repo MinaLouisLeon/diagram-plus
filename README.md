@@ -6,7 +6,7 @@ diagram-plus is two things that share one file:
 
 - **A visual editor** — a drag-and-drop canvas of typed blocks (screens, endpoints,
   services, data models, jobs…) connected by typed relationships.
-- **An MCP server** — 26 tools that let Claude Code create, edit and *read* those
+- **An MCP server** — 27 tools that let Claude Code create, edit and *read* those
   same diagrams.
 
 The diagram is a **machine-writable, human-editable specification** that sits between
@@ -232,6 +232,48 @@ endpoint, service and screen with its fields — and writes the project. As each
 lands it calls `mark_block_implemented`, so the **Progress** panel fills in while you
 watch.
 
+### Show it to someone who did not draw it
+
+A finished diagram is a good specification and a poor explanation: a client looking
+at forty blocks and eleven kinds of arrow sees a wiring diagram, not their product.
+Press **Client view** for the same file read as a tree —
+
+```
+Browse  —  See what is for sale
+└─ Product  —  One item in detail
+   └─ Checkout  —  Pay for the basket
+      ├─ Shows Basket summary
+      ├─ Place the order  —  Takes the basket and charges for it
+      │  ├─ Stripe  —  Handled by Stripe
+      │  └─ Card accepted?  —  Did the payment go through?
+      │     ├─ If the card was accepted → Confirmation
+      │     └─ If the card was declined → Checkout (already covered above)
+      └─ If the basket has expired → Browse (already covered above)
+```
+
+— screens, the actions on them, and what happens in each case. The endpoint, the
+service and the table behind "Place the order" are still there in the file; they are
+just not what the conversation is about.
+
+Two kinds of condition shape it. **Decisions and conditional connections become
+branches**, which is where "if the card was declined" comes from — the words are the
+ones already written on the block. And **filters decide what is allowed in at all**:
+one group, one tag, only screens, only what has been built. A block a filter removes
+still conducts the flow, so hiding the endpoints does not break the line between the
+two screens either side of one; whatever was removed is counted in a footnote rather
+than quietly vanishing.
+
+**Present** fills the window with it — large type, click to fold a branch away — for
+the part of the call where you share your screen. **Client** and **Technical** switch
+between the folded view and every block, live, which is the toggle for the moment
+somebody's developer joins the call. Every row still knows its block, so clicking one
+selects it on the canvas.
+
+It leaves too: **Copy**, **Save as Markdown**, `dgp tree <diagram>`, or ask Claude
+for it directly.
+
+> show me the corner-shop diagram as a client tree
+
 ### Send a diagram to someone who does not have the repository
 
 The person best placed to draw the design is not always the person with commit
@@ -314,8 +356,13 @@ dgp mcp                 Run the MCP server on stdio
 dgp init                Create .diagrams in this project
 dgp list                List the diagrams in this project
 dgp spec <diagram>      Print the implementation spec as Markdown
-dgp export <diagram>    Print the diagram (--format mermaid|markdown|json)
+dgp export <diagram>    Print the diagram
+                        (--format mermaid|markdown|json|tree|tree-markdown)
                         --out <path> writes a file, --all bundles every diagram
+dgp tree <diagram>      Print the client view: what the app does, as a tree
+                        --audience technical keeps every block, --markdown
+                        writes a document, --types/--groups/--tags/--search
+                        filter it, --data adds the data models
 dgp import <file>...    Bring in diagrams exported from another project
 dgp validate <diagram>  Report problems with a diagram
 dgp install-mcp         Register the MCP server with your AI tools
@@ -325,11 +372,11 @@ dgp install-mcp         Register the MCP server with your AI tools
 
 ## MCP tools
 
-26 tools, grouped by what they are for. Full reference:
+27 tools, grouped by what they are for. Full reference:
 [docs/mcp-tools.md](docs/mcp-tools.md).
 
 **Discovery** `describe_block_schema`
-**Reading** `list_diagrams` · `get_diagram` · `get_block` · `search_blocks` · `read_implementation_spec` · `validate_diagram` · `export_diagram`
+**Reading** `list_diagrams` · `get_diagram` · `get_block` · `search_blocks` · `read_implementation_spec` · `read_project_tree` · `validate_diagram` · `export_diagram`
 **Creating** `create_diagram` · `create_diagram_from_outline`
 **Editing** `add_blocks` · `update_block` · `delete_blocks` · `add_edges` · `update_edge` · `delete_edges` · `apply_batch` · `move_blocks` · `auto_layout` · `update_diagram_meta` · `delete_diagram`
 **Building** `set_diagram_status` · `mark_block_implemented` · `implementation_progress` · `open_editor`

@@ -1,6 +1,6 @@
 # MCP tools
 
-The diagram-plus MCP server exposes 26 tools, 1 resource and 2 prompts. Every tool
+The diagram-plus MCP server exposes 27 tools, 1 resource and 2 prompts. Every tool
 that targets a diagram takes `diagram` — its slug, its id, or its exact name.
 
 Tool descriptions carry the block payload fields inline, so Claude knows what it can
@@ -42,12 +42,31 @@ endpoint with its request and response shapes, every service with its functions 
 pseudo-code, every screen with its state and actions, the full connection table, and
 the open gaps. Warns at the top when the diagram is still a draft.
 
+### `read_project_tree`
+**The tool for explaining a diagram.** Returns the same file as a plain tree of what
+the application does — screens, the actions on them, and the conditions that decide
+what happens next — with endpoints, services and data models folded away. Reach for
+it when the design has to be reviewed with someone non-technical, rather than built.
+
+| Argument | What it does |
+|---|---|
+| `audience` | `client` (default) folds the plumbing away; `technical` keeps every block |
+| `format` | `text` (default), an indented tree, or `markdown` |
+| `showConditions` | Turn decisions and conditional connections into branches. Default true |
+| `showData` | Include data models and datastores. Default false |
+| `maxDepth` | How far to follow a flow. Default 8 |
+| `roots` | `groups` buckets the top level by group; `auto` (default) does so only if groups exist |
+| `types`, `groups`, `tags`, `status`, `search` | Filters. A block ruled out never appears, but still conducts the flow, so the screens either side of a hidden endpoint stay connected |
+
+Whatever the filters remove is counted in a footnote rather than disappearing quietly.
+
 ### `validate_diagram`
 Dangling connections, empty blocks, duplicate names, relationships that do not make
 sense between those block types, models relating to models that do not exist.
 
 ### `export_diagram`
-`mermaid`, `markdown` or `json`.
+`mermaid`, `markdown`, `json`, `tree` or `tree-markdown` — the last two render the
+client view, with the defaults of `read_project_tree`.
 
 ---
 
