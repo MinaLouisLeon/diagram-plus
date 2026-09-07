@@ -6,7 +6,7 @@ diagram-plus is two things that share one file:
 
 - **A visual editor** — a drag-and-drop canvas of typed blocks (screens, endpoints,
   services, data models, jobs…) connected by typed relationships.
-- **An MCP server** — 27 tools that let Claude Code create, edit and *read* those
+- **An MCP server** — 31 tools that let Claude Code create, edit and *read* those
   same diagrams.
 
 The diagram is a **machine-writable, human-editable specification** that sits between
@@ -232,47 +232,94 @@ endpoint, service and screen with its fields — and writes the project. As each
 lands it calls `mark_block_implemented`, so the **Progress** panel fills in while you
 watch.
 
-### Show it to someone who did not draw it
+### Show it to someone who did not draw it — and let them change it
 
 A finished diagram is a good specification and a poor explanation: a client looking
 at forty blocks and eleven kinds of arrow sees a wiring diagram, not their product.
-Press **Client view** for the same file read as a tree —
+The **Client view** tab in the toolbar switches the whole workspace to the other
+document — the same project as plain boxes and arrows:
 
 ```
-Browse  —  See what is for sale
-└─ Product  —  One item in detail
-   └─ Checkout  —  Pay for the basket
-      ├─ Shows Basket summary
-      ├─ Place the order  —  Takes the basket and charges for it
-      │  ├─ Stripe  —  Handled by Stripe
-      │  └─ Card accepted?  —  Did the payment go through?
-      │     ├─ If the card was accepted → Confirmation
-      │     └─ If the card was declined → Checkout (already covered above)
-      └─ If the basket has expired → Browse (already covered above)
+        ┌──────────────┐        ┌──────────────────┐
+        │ Browse       │        │ Nightly receipts │
+        │ See what is  │        │ Runs on a        │
+        │ for sale     │        │ schedule         │
+        └──────┬───────┘        └──────────────────┘
+               │
+        ┌──────▼───────┐
+        │ Checkout     │
+        │ Pay for the  │
+        │ basket       │
+        └──┬────────┬──┘
+   Place   │        │  If declined
+   the order        │
+     ┌─────▼──┐  ┌──▼──────────────────┐
+     │ Stripe │  │ Card accepted       │
+     │        │  │ Did the payment go  │
+     └────────┘  │ through?            │
+                 │ [accepted][declined]│
+                 └──────────┬──────────┘
+                            │ If accepted
+                   ┌────────▼─────────┐
+                   │ Confirmation     │
+                   └──────────────────┘
 ```
 
-— screens, the actions on them, and what happens in each case. The endpoint, the
+Screens, the actions on them, and what happens in each case. The endpoint, the
 service and the table behind "Place the order" are still there in the file; they are
 just not what the conversation is about.
 
 Two kinds of condition shape it. **Decisions and conditional connections become
-branches**, which is where "if the card was declined" comes from — the words are the
-ones already written on the block. And **filters decide what is allowed in at all**:
-one group, one tag, only screens, only what has been built. A block a filter removes
-still conducts the flow, so hiding the endpoints does not break the line between the
-two screens either side of one; whatever was removed is counted in a footnote rather
-than quietly vanishing.
+arrows with words on them**, which is where "If declined" comes from — the wording is
+what is already written on the block. And **filters decide what is allowed in at
+all**: one group, one tag, only screens, only what has been built. A block a filter
+removes still conducts the flow, so hiding the endpoints does not break the line
+between the two screens either side of one.
 
-**Present** fills the window with it — large type, click to fold a branch away — for
-the part of the call where you share your screen. **Client** and **Technical** switch
-between the folded view and every block, live, which is the toggle for the moment
-somebody's developer joins the call. Every row still knows its block, so clicking one
-selects it on the canvas.
+**Present** fills the window with it, without the editing chrome, for the part of the
+call where you share your screen.
 
-It leaves too: **Copy**, **Save as Markdown**, `dgp tree <diagram>`, or ask Claude
-for it directly.
+#### It is a document, not a picture
 
-> show me the corner-shop diagram as a client tree
+The client view is stored in the diagram file and edited like any other canvas —
+because a review produces changes, and the useful ones arrive while somebody is
+talking. Rename a box in place, drag it where the conversation goes, draw an arrow,
+change the wording of a decision and its outcomes, reorder the walkthrough, or drag a
+new box in from the palette.
+
+None of it touches the technical diagram. What the client changed is held here and
+counted along the bottom:
+
+```
+2 changes from this review are not in the technical diagram yet.   [Apply to the diagram]
+  + new automatic "Text the customer"
+  ~ reworded "Confirmation" → "Order confirmed"
+```
+
+**Apply to the diagram** carries them across: a new box becomes a real block of
+whatever type it was given, tagged `from-client` and left thin — a name and a line —
+because deciding it is really a job plus an integration, and wiring it up, is the
+next piece of work. Deletions are never applied unless you ask for them by name.
+**Update from diagram** goes the other way: it brings across whatever changed on the
+technical side, keeping every word the client wrote, every box they added, and every
+box they deleted.
+
+#### Handing it to Claude
+
+That loop is the point, and it works from either end:
+
+> read the client view of corner-shop, then apply what the client asked for and fill
+> in the technical detail
+
+Claude reads it with `read_client_view` — boxes, arrows, conditions, and what is out
+of step — then `apply_client_view` to bring the changes into the diagram, and the
+ordinary editing tools to turn "Text the customer" into a job, an external service
+and the connections between them. `sync_client_view` pushes its own changes back the
+other way, so the next review opens on the current design. `update_client_view` lets
+it prepare or write up a view without touching the diagram at all.
+
+The same thing as an indented list — for pasting into an email — is under **List**,
+and leaves as **Copy**, **Save as Markdown**, or `dgp tree <diagram>`.
 
 ### Send a diagram to someone who does not have the repository
 
@@ -372,13 +419,14 @@ dgp install-mcp         Register the MCP server with your AI tools
 
 ## MCP tools
 
-27 tools, grouped by what they are for. Full reference:
+31 tools, grouped by what they are for. Full reference:
 [docs/mcp-tools.md](docs/mcp-tools.md).
 
 **Discovery** `describe_block_schema`
 **Reading** `list_diagrams` · `get_diagram` · `get_block` · `search_blocks` · `read_implementation_spec` · `read_project_tree` · `validate_diagram` · `export_diagram`
 **Creating** `create_diagram` · `create_diagram_from_outline`
 **Editing** `add_blocks` · `update_block` · `delete_blocks` · `add_edges` · `update_edge` · `delete_edges` · `apply_batch` · `move_blocks` · `auto_layout` · `update_diagram_meta` · `delete_diagram`
+**Client view** `read_client_view` · `update_client_view` · `sync_client_view` · `apply_client_view`
 **Building** `set_diagram_status` · `mark_block_implemented` · `implementation_progress` · `open_editor`
 **Sharing** `import_diagram`
 

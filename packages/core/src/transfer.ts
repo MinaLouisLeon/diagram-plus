@@ -282,6 +282,9 @@ export function assignDiagramContent(draft: Diagram, next: Diagram): void {
   draft.groups = next.groups;
   draft.canvas = next.canvas;
   draft.notes = next.notes;
+  // The client view travels with the diagram: it is the same file, and losing
+  // it on a save would throw away a whole review.
+  draft.clientView = next.clientView;
 }
 
 /**
