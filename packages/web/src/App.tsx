@@ -5,6 +5,7 @@ import { Sidebar } from './components/Sidebar';
 import { Toolbar } from './components/Toolbar';
 import { BottomPanel } from './components/Panels';
 import { ClientPresentation, ClientView } from './components/ClientView';
+import { DesignView } from './components/DesignView';
 import { ImportDialog } from './components/ImportDialog';
 import { NewDiagramDialog } from './components/NewDiagramDialog';
 import { McpSettings } from './components/McpSettings';
@@ -157,11 +158,17 @@ export function App() {
         <Sidebar onNewDiagram={openDialog} />
         <div className="canvas-area">
           {state.current ? (
-            state.view === 'client' ? <ClientView /> : <Canvas />
+            state.view === 'client' ? (
+              <ClientView />
+            ) : state.view === 'design' ? (
+              <DesignView />
+            ) : (
+              <Canvas />
+            )
           ) : (
             <EmptyState loading={state.loading} onNew={openDialog} />
           )}
-          {state.view === 'client' ? null : <BottomPanel />}
+          {state.view === 'diagram' ? <BottomPanel /> : null}
           <Notices />
         </div>
         {state.current && state.view === 'diagram' ? (

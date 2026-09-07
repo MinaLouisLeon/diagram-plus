@@ -879,3 +879,258 @@ pre.spec {
 
 /* Presenting: the canvas fills the window and stops being editable. */
 .present-body.canvas { padding: 0; display: flex; flex: 1; min-height: 0; }
+
+/* ================================================================== *
+ * The design tab
+ * ================================================================== *
+ *
+ * Three panes: layers and the palette, the artboards, the properties.
+ *
+ * The one rule worth stating is that everything inside `.design-artboard-body`
+ * belongs to the *design*, not to the editor. The app's own colours, fonts and
+ * borders stop at that boundary — what is inside comes from the design system
+ * tokens, so a screen looks the same here as it will when it is built, and the
+ * editor's dark theme does not quietly become part of somebody's product.
+ */
+
+.design-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+.design-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 6px;
+  padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg-panel);
+}
+.design-count { font-size: 11.5px; color: var(--text-dim); }
+
+.design-body { flex: 1; min-height: 0; display: flex; }
+
+/* ---------- the left pane ---------- */
+
+.design-side {
+  flex: none; width: 260px; min-width: 0; overflow: auto;
+  border-right: 1px solid var(--border); background: var(--bg-panel);
+  display: flex; flex-direction: column;
+}
+
+.design-panel-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--bg-panel); z-index: 2;
+}
+.design-panel-head .label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim);
+}
+.design-panel-head .hint { margin: 0; font-size: 11px; color: var(--text-dim); }
+
+.design-palette { border-bottom: 1px solid var(--border); }
+.design-palette-group { padding: 8px 10px 4px; }
+.design-palette-label {
+  display: block; margin-bottom: 5px;
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim);
+}
+.design-palette-items { display: flex; flex-wrap: wrap; gap: 4px; }
+.design-palette-item {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 7px; font: inherit; font-size: 11.5px;
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  cursor: grab; user-select: none;
+}
+.design-palette-item:hover:not(:disabled) { border-color: var(--accent); }
+.design-palette-item:disabled { opacity: 0.4; cursor: default; }
+.design-palette-item:active { cursor: grabbing; }
+
+/* ---------- the layers tree ---------- */
+
+.design-layers { display: flex; flex-direction: column; min-height: 0; }
+.design-layers-tree { padding-bottom: 20px; }
+.design-layers-tree .hint { margin: 10px; font-size: 12px; color: var(--text-dim); }
+
+.design-layer {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 8px 3px 0; font-size: 12px; cursor: default;
+  border: 1px solid transparent;
+}
+.design-layer:hover { background: var(--bg-raised); }
+.design-layer.selected {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: var(--accent);
+}
+.design-layer-twist {
+  flex: none; width: 14px; padding: 0; font: inherit; font-size: 9px;
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+}
+.design-layer-icon { flex: none; width: 14px; text-align: center; color: var(--text-muted); }
+.design-layer-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.design-layer-tag {
+  flex: none; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-dim); border: 1px solid var(--border); border-radius: 3px; padding: 0 3px;
+}
+.design-layer-tag.act { color: var(--accent); border-color: var(--accent); }
+
+/* ---------- the canvas ---------- */
+
+.design-canvas {
+  flex: 1; min-width: 0; position: relative; overflow: hidden;
+  background:
+    radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0) 0 0 / 24px 24px,
+    var(--bg);
+  cursor: grab;
+}
+.design-canvas:active { cursor: grabbing; }
+
+.design-surface { position: absolute; inset: 0; transform-origin: 0 0; }
+
+.design-artboard { position: absolute; }
+.design-artboard-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 2px; font-size: 12px; color: var(--text-muted);
+  cursor: move; user-select: none;
+}
+.design-artboard-name { font-weight: 600; color: var(--text); }
+.design-artboard-bar code { font-size: 11px; color: var(--text-dim); }
+.design-artboard-size { font-size: 11px; color: var(--text-dim); }
+.design-artboard.selected .design-artboard-name { color: var(--accent); }
+.design-artboard.orphaned .design-artboard-name { color: var(--warning); }
+
+.design-status {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em;
+  border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; color: var(--text-dim);
+}
+.design-status.drafted { color: var(--accent); border-color: var(--accent); }
+.design-status.approved { color: var(--success, #16a34a); border-color: currentColor; }
+
+.design-artboard-body {
+  position: relative; overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 30px rgb(0 0 0 / 0.18);
+  /* Inside here the design's own tokens rule; nothing of the editor's theme
+     may leak in, or a screen would look different from what gets built. */
+  color: #0f172a;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px; line-height: 1.5; text-align: left;
+}
+.design-artboard.selected .design-artboard-body { border-color: var(--accent); }
+.design-artboard.orphaned .design-artboard-body { opacity: 0.6; }
+
+.design-artboard-resize {
+  position: absolute; right: -5px; bottom: -5px; width: 14px; height: 14px;
+  border: 1px solid var(--accent); background: var(--bg-panel);
+  border-radius: 3px; cursor: nwse-resize; opacity: 0;
+}
+.design-artboard:hover .design-artboard-resize,
+.design-artboard.selected .design-artboard-resize { opacity: 1; }
+
+.design-zoom {
+  position: absolute; right: 12px; bottom: 12px; display: flex; gap: 4px;
+  padding: 4px; border-radius: var(--radius-sm);
+  background: var(--bg-panel); border: 1px solid var(--border);
+}
+
+/* ---------- an element on an artboard ---------- */
+
+.dz-el { position: relative; outline: 1px solid transparent; outline-offset: -1px; }
+.dz-el:hover { outline-color: color-mix(in srgb, #2563eb 45%, transparent); }
+.dz-el.selected { outline: 2px solid #2563eb; outline-offset: -1px; }
+.dz-el.locked { cursor: default; }
+
+.dz-el-badge {
+  position: absolute; top: -17px; left: -1px; z-index: 3;
+  padding: 1px 5px; border-radius: 3px 3px 0 0;
+  background: #2563eb; color: #fff;
+  font-size: 10px; line-height: 1.4; letter-spacing: 0.02em; white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ---------- the properties pane ---------- */
+
+.design-inspector {
+  flex: none; width: 300px; overflow: auto;
+  border-left: 1px solid var(--border); background: var(--bg-panel);
+  padding: 14px 16px 26px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.design-inspector-head { display: flex; align-items: baseline; gap: 8px; }
+.design-inspector-head strong { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+.design-node-kind {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim);
+}
+
+.design-inspector label,
+.design-inspector .label {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim);
+}
+.design-inspector label.check {
+  flex-direction: row; align-items: center; gap: 5px; text-transform: none; letter-spacing: normal;
+  font-size: 12px; color: var(--text-muted);
+}
+.design-inspector input,
+.design-inspector select,
+.design-inspector textarea {
+  font: inherit; font-size: 13px; text-transform: none; letter-spacing: normal;
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 8px;
+  min-width: 0;
+}
+.design-inspector input:focus,
+.design-inspector select:focus,
+.design-inspector textarea:focus { outline: none; border-color: var(--accent); }
+.design-inspector textarea { resize: vertical; }
+.design-inspector .hint { margin: 0; font-size: 11.5px; color: var(--text-dim); line-height: 1.5; }
+.design-inspector .hint.warn { color: var(--warning); }
+
+.design-row { display: flex; gap: 6px; align-items: flex-end; }
+.design-row > label { flex: 1; min-width: 0; }
+.design-size { display: flex; gap: 4px; }
+.design-size select { flex: 1; min-width: 0; }
+.design-size input { flex: 0 0 58px; }
+
+.design-section {
+  display: flex; flex-direction: column; gap: 8px;
+  padding-top: 10px; border-top: 1px solid var(--border);
+}
+.design-checks { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.design-options, .design-states { display: flex; flex-direction: column; gap: 6px; }
+.design-option-row, .design-state-row { display: flex; gap: 5px; align-items: center; }
+.design-option-row input, .design-state-row input { flex: 1; min-width: 0; }
+.design-inspector-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ---------- the tokens panel ---------- */
+
+.design-tokens {
+  display: flex; flex-direction: column; gap: 12px; padding: 0 10px 24px;
+}
+.design-tokens label,
+.design-tokens .label {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim);
+}
+.design-tokens input,
+.design-tokens textarea {
+  font: inherit; font-size: 12.5px; text-transform: none; letter-spacing: normal;
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px 7px;
+  min-width: 0;
+}
+.design-tokens textarea { resize: vertical; }
+.design-tokens input:focus, .design-tokens textarea:focus { outline: none; border-color: var(--accent); }
+.design-tokens .hint { margin: 0; font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+
+.design-token-row { display: flex; gap: 4px; align-items: center; }
+.design-token-name { flex: 0 0 88px; }
+.design-token-value { flex: 1; min-width: 0; font-family: var(--mono, ui-monospace, monospace); }
+.design-token-row input[type='color'] {
+  flex: 0 0 28px; height: 24px; padding: 1px; cursor: pointer;
+}
+.design-token-row.type input[type='number'] { flex: 0 0 52px; }
+.design-token-sample { flex: 0 0 30px; text-align: center; color: var(--text); }
+
+/* ---------- the strip along the bottom ---------- */
+
+.design-strip {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 7px 12px; border-top: 1px solid var(--border);
+  background: var(--bg-panel); font-size: 12px; color: var(--text-muted);
+}
+.design-strip.quiet { color: var(--text-dim); }

@@ -21,6 +21,24 @@ import { createDiagram, type CreateDiagramInput } from './factory.js';
 
 export const DIAGRAM_DIR = '.diagrams';
 export const DIAGRAM_EXT = '.diagram.json';
+export const DESIGN_EXT = '.design.json';
+
+/**
+ * The kinds of document a slug can have.
+ *
+ * A project's `.diagrams/` holds two files per project: the graph, and the
+ * screen designs drawn from it. They are separate files rather than one
+ * because a design tree is an order of magnitude larger than the graph it
+ * belongs to, and burying one in the other makes every diagram diff
+ * unreadable — but they share a slug, so the pair always travels together.
+ */
+export const DOCUMENT_KINDS = ['diagram', 'design'] as const;
+export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
+
+export const DOCUMENT_EXT: Record<DocumentKind, string> = {
+  diagram: DIAGRAM_EXT,
+  design: DESIGN_EXT,
+};
 
 export class DiagramNotFoundError extends Error {
   constructor(public readonly ref: string) {
@@ -57,16 +75,16 @@ export interface DiagramFs {
   readonly dir: string;
   /** Create the diagram directory if it is not there yet. */
   ensureDir(): Promise<void>;
-  /** Slugs of the diagram files present, in any order. */
-  listSlugs(): Promise<string[]>;
+  /** Slugs of the files of that kind present, in any order. */
+  listSlugs(kind?: DocumentKind): Promise<string[]>;
   /** File contents, or `null` when there is no such file. */
-  read(slug: string): Promise<string | null>;
+  read(slug: string, kind?: DocumentKind): Promise<string | null>;
   /** Write the file, atomically where the platform allows it. */
-  write(slug: string, contents: string): Promise<void>;
+  write(slug: string, contents: string, kind?: DocumentKind): Promise<void>;
   /** Delete the file. Succeeds when it is already gone. */
-  remove(slug: string): Promise<void>;
-  /** Absolute path of a diagram file, for messages and logs. */
-  fileForSlug(slug: string): string;
+  remove(slug: string, kind?: DocumentKind): Promise<void>;
+  /** Absolute path of a file, for messages and logs. */
+  fileForSlug(slug: string, kind?: DocumentKind): string;
 }
 
 export interface WriteResult {
@@ -216,6 +234,9 @@ export class DiagramStore {
       updatedAt: nowIso(),
     });
     if (nextSlug !== current.slug) {
+      // The designs are a sibling file sharing the slug, so a rename has to
+      // take them with it or they are stranded under the old name.
+      await this.moveSibling(current.slug, nextSlug, name);
       await this.fs.remove(current.slug);
     }
     return written;
@@ -225,7 +246,35 @@ export class DiagramStore {
     const diagram = await this.read(ref);
     const file = this.fs.fileForSlug(diagram.slug);
     await this.fs.remove(diagram.slug);
+    await this.fs.remove(diagram.slug, 'design');
     return { slug: diagram.slug, file };
+  }
+
+  /**
+   * Carry the design file across a rename.
+   *
+   * Deliberately best-effort and text-level: the store knows the design exists
+   * as a sibling, but not what is in it. Failing to move it must never fail
+   * the rename of the diagram itself.
+   */
+  private async moveSibling(from: string, to: string, name: string): Promise<void> {
+    try {
+      const text = await this.fs.read(from, 'design');
+      if (text === null) return;
+      let contents = text;
+      try {
+        const parsed = JSON.parse(text) as Record<string, unknown>;
+        parsed['slug'] = to;
+        parsed['name'] = name;
+        contents = `${JSON.stringify(parsed, null, 2)}\n`;
+      } catch {
+        /* Not readable as JSON — move the bytes and let the reader complain. */
+      }
+      await this.fs.write(to, contents, 'design');
+      await this.fs.remove(from, 'design');
+    } catch {
+      /* A missing or unwritable design file is not a reason to fail a rename. */
+    }
   }
 
   private enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
@@ -262,4 +311,24 @@ export function slugFromFilename(filename: string): string | null {
   const base = filename.replace(/^.*[\\/]/, '');
   if (!base.endsWith(DIAGRAM_EXT)) return null;
   return base.slice(0, -DIAGRAM_EXT.length);
+}
+
+/**
+ * The slug and kind a filename in `.diagrams/` encodes, or `null` when it is
+ * neither. The design extension is checked first: `.design.json` and
+ * `.diagram.json` share no suffix, but keeping the order explicit means adding
+ * a third kind later cannot silently shadow one of these.
+ */
+export function documentFromFilename(
+  filename: string,
+): { slug: string; kind: DocumentKind } | null {
+  const base = filename.replace(/^.*[\\/]/, '');
+  for (const kind of DOCUMENT_KINDS) {
+    const ext = DOCUMENT_EXT[kind];
+    if (base.endsWith(ext)) {
+      const slug = base.slice(0, -ext.length);
+      if (slug) return { slug, kind };
+    }
+  }
+  return null;
 }

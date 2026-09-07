@@ -1,4 +1,9 @@
-import type { BatchOperation, Diagram } from '@diagram-plus/core/browser';
+import type {
+  BatchOperation,
+  DesignDocument,
+  DesignOperation,
+  Diagram,
+} from '@diagram-plus/core/browser';
 import {
   ApiError,
   type Api,
@@ -69,6 +74,29 @@ const api: Api = {
   validate: (slug) => request(`/api/diagrams/${slug}/validate`),
 
   export: (slug, format) => request(`/api/diagrams/${slug}/export?format=${format}`),
+
+  getDesign: (slug) => request(`/api/diagrams/${slug}/design`),
+
+  replaceDesign: (slug, design: DesignDocument) =>
+    request(`/api/diagrams/${slug}/design`, { method: 'PUT', body: JSON.stringify({ design }) }),
+
+  designOps: (slug, operations: DesignOperation[], layout = false) =>
+    request(`/api/diagrams/${slug}/design/ops`, {
+      method: 'POST',
+      body: JSON.stringify({ operations, layout }),
+    }),
+
+  syncDesign: (slug, rebuild = false) =>
+    request(`/api/diagrams/${slug}/design/sync`, {
+      method: 'POST',
+      body: JSON.stringify({ rebuild }),
+    }),
+
+  arrangeDesign: (slug, includePinned = false) =>
+    request(`/api/diagrams/${slug}/design/layout`, {
+      method: 'POST',
+      body: JSON.stringify({ includePinned }),
+    }),
 };
 
 /** Connects to the server's WebSocket, reconnecting with a simple backoff. */

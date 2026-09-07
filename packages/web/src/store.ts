@@ -7,9 +7,14 @@ import {
   bundleFileName,
   createBundle,
   deriveClientView,
+  designProgress as computeDesignProgress,
   diagramFileName,
   diffClientView,
+  diffDesign,
   editClientView,
+  editDesign,
+  findElement,
+  layoutDesign,
   layoutClientView,
   parseTransfer,
   planImport,
@@ -24,7 +29,13 @@ import {
   type ClientView,
   type ClientViewDiff,
   type ClientViewOperation,
+  type DesignDiff,
+  type DesignDocument,
+  type DesignElement,
+  type DesignOperation,
+  type DesignProgress,
   type Diagram,
+  type ScreenDesign,
   type DiagramStatus,
   type DiagramSummary,
   type ImportCandidate,
@@ -53,10 +64,10 @@ import { unsavedPrompt, type UnsavedReason } from './unsaved';
 export type Panel = 'validation' | 'spec' | 'progress' | null;
 
 /**
- * Which document is filling the workspace: the technical diagram, or the
- * plain-language view a client is shown.
+ * Which document is filling the workspace: the technical diagram, the
+ * plain-language view a client is shown, or the screen designs.
  */
-export type EditorView = 'diagram' | 'client';
+export type EditorView = 'diagram' | 'client' | 'design';
 
 export interface EditorState {
   connection: 'connecting' | 'open' | 'closed';
@@ -80,6 +91,28 @@ export interface EditorState {
   clientDraft: ClientView | null;
   /** Boxes selected in the client view. */
   selectedClient: string[];
+
+  /**
+   * The screen designs.
+   *
+   * They live in their own file, so unlike the client view they are fetched
+   * rather than read off the diagram — null until the Design tab is opened.
+   * What comes back for a project that has never been designed is derived
+   * from the diagram and not yet written; `designSaved` says which it is.
+   */
+  design: DesignDocument | null;
+  designChanges: DesignDiff | null;
+  designProgress: DesignProgress | null;
+  designSaved: boolean;
+  designLoading: boolean;
+  /** Unsaved design edits. Tracked apart from the diagram's own `dirty`. */
+  designDirty: boolean;
+  designSaving: boolean;
+  /** The artboard and the element being worked on. */
+  selectedScreen: string | null;
+  selectedElement: string | null;
+  /** Which side panel the design tab is showing. */
+  designPanel: 'layers' | 'tokens';
   /** True while the client view is filling the window for a review. */
   presenting: boolean;
   /** True while a save is in flight. */
@@ -105,6 +138,18 @@ export interface EditorState {
 
 const HISTORY_LIMIT = 60;
 
+/** Everything design-related, cleared. Used whenever the open diagram changes. */
+const BLANK_DESIGN = {
+  design: null,
+  designChanges: null,
+  designProgress: null,
+  designSaved: false,
+  designDirty: false,
+  designLoading: false,
+  selectedScreen: null,
+  selectedElement: null,
+} satisfies Partial<EditorState>;
+
 class EditorStore {
   private state: EditorState = {
     connection: 'connecting',
@@ -120,6 +165,16 @@ class EditorStore {
     treeOptions: {},
     clientDraft: null,
     selectedClient: [],
+    design: null,
+    designChanges: null,
+    designProgress: null,
+    designSaved: false,
+    designLoading: false,
+    designDirty: false,
+    designSaving: false,
+    selectedScreen: null,
+    selectedElement: null,
+    designPanel: 'layers',
     presenting: false,
     saving: false,
     dirty: false,
@@ -135,6 +190,15 @@ class EditorStore {
   private listeners = new Set<() => void>();
   private undoStack: Diagram[] = [];
   private redoStack: Diagram[] = [];
+  /**
+   * The designs get their own history.
+   *
+   * Undo applies to whatever you are looking at, which is both the obvious
+   * reading of Ctrl+Z and the only one that does not make an accidental
+   * keystroke in one document undo an hour's work in the other.
+   */
+  private designUndoStack: DesignDocument[] = [];
+  private designRedoStack: DesignDocument[] = [];
   private live: { close: () => void } | null = null;
   private viewportTimer: number | undefined;
   /** Bumped by every edit, so a save can tell whether it was overtaken. */
@@ -158,8 +222,43 @@ class EditorStore {
     this.set({
       current: diagram,
       validation: diagram ? validateDiagram(diagram) : null,
-      canUndo: this.undoStack.length > 0,
-      canRedo: this.redoStack.length > 0,
+      ...this.historyFlags(),
+      ...patch,
+    });
+  }
+
+  /** Whether undo and redo are available *for the document on screen*. */
+  private historyFlags(view: EditorView = this.state.view): Partial<EditorState> {
+    return view === 'design'
+      ? { canUndo: this.designUndoStack.length > 0, canRedo: this.designRedoStack.length > 0 }
+      : { canUndo: this.undoStack.length > 0, canRedo: this.redoStack.length > 0 };
+  }
+
+  /**
+   * Replace the local copy of the designs, keeping everything derived from
+   * them in step — the diff against the diagram, the progress counts, and
+   * whether a selected element still exists.
+   */
+  private setDesign(design: DesignDocument | null, patch: Partial<EditorState> = {}): void {
+    const current = this.state.current;
+    const screens = design?.screens ?? [];
+    const selectedScreen =
+      this.state.selectedScreen && screens.some((s) => s.id === this.state.selectedScreen)
+        ? this.state.selectedScreen
+        : (screens[0]?.id ?? null);
+    const screen = screens.find((s) => s.id === selectedScreen);
+    const selectedElement =
+      screen && this.state.selectedElement && findElement(screen.root, this.state.selectedElement)
+        ? this.state.selectedElement
+        : null;
+
+    this.set({
+      design,
+      designChanges: design && current ? diffDesign(current, design) : null,
+      designProgress: design && current ? computeDesignProgress(current, design) : null,
+      selectedScreen,
+      selectedElement,
+      ...this.historyFlags(),
       ...patch,
     });
   }
@@ -187,6 +286,7 @@ class EditorStore {
       selectedClient: [],
       clientDraft: null,
       externalEdit: null,
+      ...BLANK_DESIGN,
     });
 
     try {
@@ -208,6 +308,27 @@ class EditorStore {
   private onLive(message: LiveMessage): void {
     if (message.type === 'hello') {
       this.set({ diagrams: message.diagrams, root: message.root });
+      return;
+    }
+    if (message.type === 'design:deleted') {
+      if (this.state.current?.slug === message.slug) this.set({ ...BLANK_DESIGN });
+      return;
+    }
+    if (message.type === 'design:changed') {
+      const current = this.state.current;
+      if (!current || current.slug !== message.slug) return;
+      // Unsaved design work outranks the file, exactly as it does for the
+      // diagram: the user keeps what is on screen and is told the file moved.
+      if (this.state.designDirty) {
+        if (message.source === 'external') {
+          this.set({
+            externalEdit: { at: Date.now(), revision: message.revision, applied: false },
+          });
+        }
+        return;
+      }
+      if (this.state.design && message.revision <= this.state.design.revision) return;
+      this.setDesign(message.design, { designSaved: true, designDirty: false });
       return;
     }
     if (message.type === 'diagram:deleted') {
@@ -250,12 +371,15 @@ class EditorStore {
     if (!(await this.confirmDiscard('switch'))) return;
     this.undoStack = [];
     this.redoStack = [];
+    this.designUndoStack = [];
+    this.designRedoStack = [];
     this.set({
       loading: true,
       selectedBlocks: [],
       selectedEdges: [],
       selectedClient: [],
       clientDraft: null,
+      ...BLANK_DESIGN,
     });
     try {
       const { diagram } = await api.getDiagram(slug);
@@ -269,6 +393,7 @@ class EditorStore {
         treeOptions: diagram.clientView?.options ?? {},
       });
       if (this.state.view === 'client') this.primeClientView();
+      if (this.state.view === 'design') void this.loadDesign();
     } catch (err) {
       this.set({ loading: false, error: describe(err) });
     }
@@ -397,8 +522,18 @@ class EditorStore {
 
   /* ---- saving ---------------------------------------------------------- */
 
-  /** Write the local copy to disk. */
+  /**
+   * Write the local copies to disk — the diagram, the designs, or both.
+   *
+   * One Save button covers two files. They are written separately because they
+   * are separate documents with separate revisions, but a user who has moved a
+   * block and moved a button means one thing by "save".
+   */
   async save(): Promise<void> {
+    await Promise.all([this.saveDiagram(), this.saveDesign()]);
+  }
+
+  private async saveDiagram(): Promise<void> {
     const current = this.state.current;
     if (!current || !this.state.dirty || this.state.saving) return;
 
@@ -427,15 +562,15 @@ class EditorStore {
    * Returns false when the user decided not to go ahead after all.
    */
   async confirmDiscard(reason: UnsavedReason): Promise<boolean> {
-    if (!this.state.dirty) return true;
+    if (!this.state.dirty && !this.state.designDirty) return true;
     const choice = await unsavedPrompt.ask(reason);
     if (choice === 'cancel') return false;
     if (choice === 'save') {
       await this.save();
       // A save that failed is not a reason to carry on and lose the work.
-      return !this.state.dirty;
+      return !this.state.dirty && !this.state.designDirty;
     }
-    this.set({ dirty: false });
+    this.set({ dirty: false, designDirty: false });
     return true;
   }
 
@@ -626,7 +761,9 @@ class EditorStore {
     this.redoStack = [];
   }
 
+  /** Undo applies to the document on screen, which is the only sane reading. */
   undo(): void {
+    if (this.state.view === 'design') return this.undoDesign();
     const previous = this.undoStack.pop();
     const current = this.state.current;
     if (!previous || !current) return;
@@ -635,11 +772,28 @@ class EditorStore {
   }
 
   redo(): void {
+    if (this.state.view === 'design') return this.redoDesign();
     const next = this.redoStack.pop();
     const current = this.state.current;
     if (!next || !current) return;
     this.undoStack.push(structuredClone(current));
     this.edit(next);
+  }
+
+  private undoDesign(): void {
+    const previous = this.designUndoStack.pop();
+    const design = this.state.design;
+    if (!previous || !design) return;
+    this.designRedoStack.push(structuredClone(design));
+    this.setDesign(previous, { designDirty: true });
+  }
+
+  private redoDesign(): void {
+    const next = this.designRedoStack.pop();
+    const design = this.state.design;
+    if (!next || !design) return;
+    this.designUndoStack.push(structuredClone(design));
+    this.setDesign(next, { designDirty: true });
   }
 
   /* ---- ui state --------------------------------------------------------- */
@@ -662,8 +816,9 @@ class EditorStore {
    */
   setView(view: EditorView): void {
     if (view === this.state.view) return;
-    this.set({ view, selectedClient: [] });
+    this.set({ view, selectedClient: [], ...this.historyFlags(view) });
     if (view === 'client') this.primeClientView();
+    if (view === 'design' && !this.state.design) void this.loadDesign();
   }
 
   /**
@@ -794,6 +949,169 @@ class EditorStore {
       if (empty) delete (filter as Record<string, unknown>)[key];
     }
     this.setTreeOptions({ filter });
+  }
+
+  /* ---- the screen designs ----------------------------------------------- */
+
+  /**
+   * Fetch the designs for the open diagram.
+   *
+   * A project that has never been designed gets a document derived from the
+   * diagram — a wireframe per screen — without anything being written, so
+   * opening the tab to look never creates a file. `designSaved` records which
+   * of the two it is, and the strip along the bottom says so.
+   */
+  async loadDesign(): Promise<void> {
+    const current = this.state.current;
+    if (!current || this.state.designLoading) return;
+
+    this.set({ designLoading: true });
+    try {
+      const result = await api.getDesign(current.slug);
+      this.designUndoStack = [];
+      this.designRedoStack = [];
+      this.setDesign(result.design, {
+        designLoading: false,
+        designSaved: result.saved ?? true,
+        designDirty: false,
+        error: null,
+      });
+    } catch (err) {
+      this.set({ designLoading: false, error: describe(err) });
+    }
+  }
+
+  /**
+   * Edit the designs.
+   *
+   * Every change made in the editor — a dragged element, a renamed layer, a
+   * retyped button — arrives here in the same vocabulary the MCP tools use, so
+   * a screen worked on by hand and one drawn by Claude are the same kind of
+   * change to the same document.
+   *
+   * Local, like every diagram edit: nothing reaches the file until a save.
+   */
+  designEdit(operations: DesignOperation[], options: { history?: boolean } = {}): void {
+    const design = this.state.design;
+    if (!design || !operations.length) return;
+
+    const result = editDesign(design, operations);
+    if (result.errors.length) {
+      this.set({ error: result.errors[0]?.message ?? 'That change could not be made.' });
+    }
+    if (!result.applied) return;
+
+    if (options.history !== false) this.pushDesignHistory();
+    this.setDesign(result.document, { designDirty: true });
+  }
+
+  private pushDesignHistory(): void {
+    const design = this.state.design;
+    if (!design) return;
+    this.designUndoStack.push(structuredClone(design));
+    if (this.designUndoStack.length > HISTORY_LIMIT) this.designUndoStack.shift();
+    this.designRedoStack = [];
+  }
+
+  private async saveDesign(): Promise<void> {
+    const current = this.state.current;
+    const design = this.state.design;
+    if (!current || !design || !this.state.designDirty || this.state.designSaving) return;
+
+    this.set({ designSaving: true });
+    try {
+      const result = await api.replaceDesign(current.slug, design);
+      // A design edited while the write was in flight is still unsaved, and
+      // the local copy stays as it is — the reply is already behind it.
+      const editedSince = this.state.design !== design;
+      this.setDesign(editedSince ? this.state.design : result.design, {
+        designSaving: false,
+        designDirty: editedSince,
+        designSaved: true,
+        error: null,
+      });
+    } catch (err) {
+      this.set({ designSaving: false, error: describe(err) });
+    }
+  }
+
+  /** Which artboard is being worked on, and which element within it. */
+  selectScreen(id: string | null): void {
+    this.set({ selectedScreen: id, selectedElement: null });
+  }
+
+  selectElement(id: string | null, screen?: string): void {
+    this.set({
+      selectedElement: id,
+      ...(screen ? { selectedScreen: screen } : {}),
+    });
+  }
+
+  setDesignPanel(panel: 'layers' | 'tokens'): void {
+    this.set({ designPanel: panel });
+  }
+
+  /** The artboard currently being worked on. */
+  currentScreen(): ScreenDesign | null {
+    const design = this.state.design;
+    if (!design) return null;
+    return design.screens.find((s) => s.id === this.state.selectedScreen) ?? null;
+  }
+
+  /** The element currently selected, and the screen it belongs to. */
+  currentElement(): DesignElement | null {
+    const screen = this.currentScreen();
+    if (!screen || !this.state.selectedElement) return null;
+    return findElement(screen.root, this.state.selectedElement)?.element ?? null;
+  }
+
+  /**
+   * Bring the designs up to date with the diagram, keeping what has been drawn.
+   *
+   * This one writes rather than editing locally: seeding a dozen screens is
+   * not something to leave sitting in an unsaved buffer, and it is the same
+   * operation `sync_screen_designs` performs over MCP.
+   */
+  async syncDesign(rebuild = false): Promise<void> {
+    const current = this.state.current;
+    if (!current) return;
+    if (this.state.designDirty) await this.saveDesign();
+
+    this.set({ designLoading: true });
+    try {
+      const result = await api.syncDesign(current.slug, rebuild);
+      this.designUndoStack = [];
+      this.designRedoStack = [];
+      this.setDesign(result.design, {
+        designLoading: false,
+        designSaved: true,
+        designDirty: false,
+        error: null,
+      });
+
+      const report = result.report;
+      const parts: string[] = [];
+      if (report?.added.length) parts.push(`${report.added.length} seeded from the diagram`);
+      if (report?.updated.length) parts.push(`${report.updated.length} refreshed`);
+      if (report?.orphaned.length) {
+        parts.push(`${report.orphaned.length} no longer in the diagram`);
+      }
+      this.set({
+        notice: parts.length
+          ? `Designs updated: ${parts.join(', ')}.`
+          : 'The designs were already up to date.',
+      });
+    } catch (err) {
+      this.set({ designLoading: false, error: describe(err) });
+    }
+  }
+
+  /** Re-flow the artboards into a grid, including ones that were dragged. */
+  tidyDesign(): void {
+    const design = this.state.design;
+    if (!design) return;
+    this.pushDesignHistory();
+    this.setDesign(layoutDesign(design, { includePinned: true }), { designDirty: true });
   }
 
   /** Fill the window — the state to be in on a call with a client. */

@@ -4,6 +4,8 @@ import type { Field } from './common.js';
 import { BLOCK_CATALOG } from './catalog.js';
 import { EDGE_TYPE_INFO } from './edges.js';
 import { buildOrder, diagramStats } from './analysis.js';
+import { renderDesignSystem, renderScreenOutline } from './design-render.js';
+import type { DesignDocument, ScreenDesign } from './design.js';
 import { validateDiagram } from './validate.js';
 import { toMermaid } from './export.js';
 
@@ -23,6 +25,18 @@ export interface SpecOptions {
   includeConnections?: boolean;
   /** Include validation warnings as an "open questions" section. */
   includeIssues?: boolean;
+  /**
+   * The screen designs, when the project has any.
+   *
+   * Passed in rather than read off the diagram because designs live in their
+   * own file: the generator stays a pure function of what it is handed, and a
+   * caller that only wants the graph simply does not pass them.
+   *
+   * When present, each screen's section gains the layout it was designed with
+   * — every element, its words, what it is bound to and what it does — so the
+   * implementer builds the screen that was drawn rather than one of their own.
+   */
+  design?: DesignDocument | null;
 }
 
 class Doc {
@@ -132,7 +146,20 @@ function describe(doc: Doc, block: Block): void {
  * Per-type detail
  * ------------------------------------------------------------------ */
 
-function specForBlock(doc: Doc, block: Block, diagram: Diagram): void {
+/** Every artboard drawn for a block, the main variant first. */
+function designsFor(design: DesignDocument | null | undefined, block: Block): ScreenDesign[] {
+  if (!design) return [];
+  return design.screens
+    .filter((screen) => screen.blockId === block.id && !screen.orphaned)
+    .sort((a, b) => (a.variant ? 1 : 0) - (b.variant ? 1 : 0) || a.order - b.order);
+}
+
+function specForBlock(
+  doc: Doc,
+  block: Block,
+  diagram: Diagram,
+  design?: DesignDocument | null,
+): void {
   doc.heading(3, heading(block));
   describe(doc, block);
 
@@ -369,6 +396,14 @@ function specForBlock(doc: Doc, block: Block, diagram: Diagram): void {
     }
     doc.line();
   }
+
+  // The design goes last: the block says what the screen is for, this says
+  // what it looks like, and reading them in that order is how it gets built.
+  for (const screen of designsFor(design, block)) {
+    doc.line();
+    doc.line(renderScreenOutline(screen));
+    doc.line();
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -439,6 +474,20 @@ export function generateSpec(diagram: Diagram, options: SpecOptions = {}): strin
     doc.code(toMermaid(diagram), 'mermaid');
   }
 
+  // The tokens come before the screens that refer to them: an outline saying
+  // `heading.lg` and `accent` is only an instruction if those are defined
+  // somewhere the same reader has already passed.
+  if (opts.design && opts.design.screens.length) {
+    doc.heading(2, 'Design system');
+    doc.line(
+      'Every screen below is drawn against these tokens. Build them once — as CSS variables, a ' +
+        'theme object, whatever the stack wants — and refer to them by name rather than pasting ' +
+        'the values in.',
+    ).line();
+    doc.line(renderDesignSystem(opts.design.system));
+    doc.line();
+  }
+
   if (order.phases.length) {
     doc.heading(2, 'Build order');
     doc.line('Work through these in order — each phase only depends on the ones above it.').line();
@@ -479,7 +528,7 @@ export function generateSpec(diagram: Diagram, options: SpecOptions = {}): strin
       );
     }
 
-    for (const block of blocks) specForBlock(doc, block, diagram);
+    for (const block of blocks) specForBlock(doc, block, diagram, opts.design);
   }
 
   if (opts.includeConnections && diagram.edges.length) {
@@ -525,10 +574,14 @@ export function generateSpec(diagram: Diagram, options: SpecOptions = {}): strin
 }
 
 /** A focused spec for a single block — used when implementing piece by piece. */
-export function generateBlockSpec(diagram: Diagram, block: Block): string {
+export function generateBlockSpec(
+  diagram: Diagram,
+  block: Block,
+  options: { design?: DesignDocument | null } = {},
+): string {
   const doc = new Doc();
   doc.line(`# ${block.name}`).line();
   doc.line(`${BLOCK_CATALOG[block.type].label} in **${diagram.name}**.`).line();
-  specForBlock(doc, block, diagram);
+  specForBlock(doc, block, diagram, options.design);
   return doc.toString();
 }

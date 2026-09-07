@@ -2,9 +2,11 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import {
   DIAGRAM_DIR,
-  DIAGRAM_EXT,
+  DOCUMENT_EXT,
+  DOCUMENT_KINDS,
   DiagramStore as BaseDiagramStore,
   type DiagramFs,
+  type DocumentKind,
 } from './store-base.js';
 
 /**
@@ -36,45 +38,62 @@ export class NodeDiagramFs implements DiagramFs {
     this.dir = path.join(this.root, options.dirName ?? DIAGRAM_DIR);
   }
 
-  fileForSlug(slug: string): string {
-    return path.join(this.dir, `${slug}${DIAGRAM_EXT}`);
+  fileForSlug(slug: string, kind: DocumentKind = 'diagram'): string {
+    return path.join(this.dir, `${slug}${DOCUMENT_EXT[kind]}`);
   }
 
   async ensureDir(): Promise<void> {
     await fs.mkdir(this.dir, { recursive: true });
   }
 
-  async listSlugs(): Promise<string[]> {
+  async listSlugs(kind: DocumentKind = 'diagram'): Promise<string[]> {
+    const ext = DOCUMENT_EXT[kind];
     try {
       const entries = await fs.readdir(this.dir);
       return entries
-        .filter((e) => e.endsWith(DIAGRAM_EXT))
-        .map((e) => e.slice(0, -DIAGRAM_EXT.length));
+        .filter((e) => e.endsWith(ext))
+        // `.design.json` and `.diagram.json` share no suffix, but a slug that
+        // itself ended in one of the other kinds' extensions would, so the
+        // match is confirmed against every kind rather than just this one.
+        .filter((e) => longestKind(e) === kind)
+        .map((e) => e.slice(0, -ext.length))
+        .filter((slug) => slug.length > 0);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw err;
     }
   }
 
-  async read(slug: string): Promise<string | null> {
+  async read(slug: string, kind: DocumentKind = 'diagram'): Promise<string | null> {
     try {
-      return await fs.readFile(this.fileForSlug(slug), 'utf8');
+      return await fs.readFile(this.fileForSlug(slug, kind), 'utf8');
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw err;
     }
   }
 
-  async write(slug: string, contents: string): Promise<void> {
-    const file = this.fileForSlug(slug);
+  async write(slug: string, contents: string, kind: DocumentKind = 'diagram'): Promise<void> {
+    const file = this.fileForSlug(slug, kind);
     const tmp = `${file}.${process.pid}.tmp`;
     await fs.writeFile(tmp, contents, 'utf8');
     await fs.rename(tmp, file);
   }
 
-  async remove(slug: string): Promise<void> {
-    await fs.rm(this.fileForSlug(slug), { force: true });
+  async remove(slug: string, kind: DocumentKind = 'diagram'): Promise<void> {
+    await fs.rm(this.fileForSlug(slug, kind), { force: true });
   }
+}
+
+/** Which kind's extension a filename really ends in — the longest match wins. */
+function longestKind(filename: string): DocumentKind | null {
+  let best: DocumentKind | null = null;
+  for (const kind of DOCUMENT_KINDS) {
+    const ext = DOCUMENT_EXT[kind];
+    if (!filename.endsWith(ext)) continue;
+    if (!best || ext.length > DOCUMENT_EXT[best].length) best = kind;
+  }
+  return best;
 }
 
 /**

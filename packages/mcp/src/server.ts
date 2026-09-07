@@ -4,6 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
   BLOCK_TYPES,
+  DesignStore,
   DiagramStore,
   addBlocks,
   addEdges,
@@ -43,6 +44,7 @@ import {
   type TreeFilter,
   type TreeOptions,
 } from '@diagram-plus/core';
+import { registerDesignTools } from './design-tools.js';
 import {
   allBlockTypesHint,
   allEdgeTypesHint,
@@ -66,6 +68,11 @@ export const DEFAULT_EDITOR_PORT = 4517;
 
 export interface McpServerOptions {
   store: DiagramStore;
+  /**
+   * The screen designs beside each diagram. Optional so an embedder with only
+   * a diagram store still gets a working server, minus the design tools.
+   */
+  designs?: DesignStore;
   /** URL of the local editor, used in hints back to the user. */
   editorUrl?: string;
 }
@@ -121,13 +128,22 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         'connected by typed relationships. The user reviews and edits the same diagram in a',
         'visual editor, so keep names and details clear enough for a person to read.',
         '',
+        'Three documents describe one project, and they share a slug:',
+        '- the diagram — what the application is, as typed blocks and connections;',
+        '- the client view — the same thing in plain words, for review with a client;',
+        '- the screen designs — what each screen actually looks like, as a typed layout tree.',
+        'Implementing means building from all three.',
+        '',
         'Typical flow:',
         '1. create_diagram_from_outline — turn the user\'s idea into a first diagram.',
         '2. The user opens the editor, edits it, and marks it ready.',
-        '3. read_implementation_spec — get the full spec, then build the project from it.',
-        '4. mark_block_implemented — record progress as each piece is written.',
+        '3. set_design_system, then sync_screen_designs, then design_screen for each screen —',
+        '   the interface, drawn against tokens rather than raw colours.',
+        '4. read_implementation_spec — the full spec with the designs folded in, then build it.',
+        '5. mark_block_implemented — record progress as each piece is written.',
         '',
-        'Call describe_block_schema first if you are unsure what a block type can hold.',
+        'Call describe_block_schema before building a diagram if you are unsure what a block type',
+        'can hold, and describe_design_schema before drawing a screen.',
       ].join('\n'),
     },
   );
@@ -319,23 +335,46 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     {
       title: 'Read the implementation spec',
       description:
-        'Return the full Markdown specification for a diagram: goal, tech stack, build order, ' +
-        'every data model, endpoint, service and screen with its fields, plus the open gaps. ' +
-        'This is what you implement the project from.',
+        'Return the full Markdown specification for a diagram: goal, tech stack, design system, ' +
+        'build order, every data model, endpoint, service and screen with its fields, and — for ' +
+        'every screen that has been designed — its full layout, element by element, with what ' +
+        'each one is bound to and what using it does. This is what you implement the project ' +
+        'from, interface included.',
       inputSchema: {
         diagram: diagramRef,
         includeDiagram: z.boolean().optional().describe('Include the Mermaid overview. Default true.'),
+        includeDesign: z
+          .boolean()
+          .optional()
+          .describe('Include the screen designs. Default true when the project has any.'),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ diagram, includeDiagram = true }) =>
-      withDiagram(diagram, (d) => {
-        const spec = generateSpec(d, { includeDiagram });
-        const preamble =
-          d.status === 'draft'
-            ? 'Note: this diagram is still a draft. Confirm with the user before writing code from it.\n\n'
-            : '';
-        return text(preamble + spec);
+    async ({ diagram, includeDiagram = true, includeDesign = true }) =>
+      withDiagram(diagram, async (d) => {
+        // The designs live in their own file, so they are fetched rather than
+        // read off the diagram — and their absence is not an error: plenty of
+        // projects are built from the graph alone.
+        const design =
+          includeDesign && options.designs
+            ? await options.designs.find(d.slug).catch(() => null)
+            : null;
+
+        const spec = generateSpec(d, { includeDiagram, design });
+        const notes: string[] = [];
+        if (d.status === 'draft') {
+          notes.push(
+            'Note: this diagram is still a draft. Confirm with the user before writing code from it.',
+          );
+        }
+        if (!design && options.designs) {
+          notes.push(
+            'No screens have been designed yet. Run sync_screen_designs to seed a wireframe per ' +
+              'screen from the diagram, then design_screen to draw them — otherwise you will be ' +
+              'inventing the interface as you build it.',
+          );
+        }
+        return text((notes.length ? `${notes.join('\n\n')}\n\n` : '') + spec);
       }),
   );
 
@@ -1163,6 +1202,16 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   );
 
   /* ================================================================ *
+   * Screen designs
+   * ================================================================ */
+
+  // Registered from their own module: the design vocabulary is large enough
+  // that folding it in here would bury the diagram tools it sits beside.
+  if (options.designs) {
+    registerDesignTools(server, { store, designs: options.designs, editorUrl });
+  }
+
+  /* ================================================================ *
    * Resources and prompts
    * ================================================================ */
 
@@ -1226,12 +1275,18 @@ export function createMcpServer(options: McpServerOptions): McpServer {
             text: [
               `Build the project described by the "${diagram}" diagram.`,
               '',
-              '1. Call read_implementation_spec to get the full specification.',
+              '1. Call read_implementation_spec to get the full specification — it includes the',
+              '   design system and the layout of every screen that has been designed.',
               '2. Follow its build order — configuration and data models first, screens last.',
               '3. Implement each block exactly as specified: the field names, routes, parameters and',
               '   steps in the diagram are the contract. If something is genuinely missing, ask me',
               '   rather than inventing it.',
-              '4. After each block is written, call mark_block_implemented with the files you created.',
+              '4. Build the interface from the designs, not from your own idea of the screen. Set',
+              '   the design tokens up once — as CSS variables, a theme object, whatever the stack',
+              '   wants — and build each screen from its outline: the elements in that order, the',
+              '   words as written, each field wired to the binding and each button to its action.',
+              '   If a screen has no design, call design_screen and draw it before building it.',
+              '5. After each block is written, call mark_block_implemented with the files you created.',
             ].join('\n'),
           },
         },
