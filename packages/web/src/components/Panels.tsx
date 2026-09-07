@@ -4,13 +4,14 @@ import { separator, showContextMenu } from '../context-menu';
 import { blockMenu } from '../menus';
 import { store, useEditorState } from '../store';
 import { copyText, selectWithin } from '../text-menu';
-import { TreePanel } from './ClientView';
 
 /**
  * The bottom drawer: design checks, a preview of the specification Claude will
- * read, and the client view. Seeing the spec is what makes the diagram feel
- * like a contract rather than a picture; seeing the tree is what makes it
- * explainable to whoever is paying for it.
+ * read, and the build order. Seeing the spec is what makes the diagram feel
+ * like a contract rather than a picture.
+ *
+ * The client view is not here — it is a view of its own, because it is worked
+ * in rather than glanced at.
  */
 
 export function BottomPanel() {
@@ -18,7 +19,6 @@ export function BottomPanel() {
   if (panel === 'validation') return <ValidationPanel />;
   if (panel === 'spec') return <SpecPanel />;
   if (panel === 'progress') return <ProgressPanel />;
-  if (panel === 'tree') return <TreePanel />;
   return null;
 }
 

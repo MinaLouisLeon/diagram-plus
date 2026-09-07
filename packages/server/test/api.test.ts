@@ -315,3 +315,89 @@ describe('importing a diagram from elsewhere', () => {
     expect(body.error).toMatch(/not a diagram/);
   });
 });
+
+describe('the client view over HTTP', () => {
+  interface ViewBody {
+    clientView: {
+      nodes: { id: string; name: string; blockId: string | null }[];
+      edges: unknown[];
+    };
+    changes: { hasChanges: boolean; addedNodes: { name: string }[] };
+  }
+
+  beforeAll(async () => {
+    await call('POST', '/api/diagrams', { name: 'Client Test', projectGoal: 'Review it.' });
+    await call('POST', '/api/diagrams/client-test/batch', {
+      operations: [
+        { op: 'add_block', block: { type: 'ui_screen', name: 'Browse', data: { purpose: 'Look' } } },
+        { op: 'add_block', block: { type: 'ui_screen', name: 'Checkout', data: { purpose: 'Pay' } } },
+        { op: 'add_block', block: { type: 'api_endpoint', name: 'Create order' } },
+        { op: 'add_edge', edge: { source: 'Browse', target: 'Checkout', type: 'navigation' } },
+        { op: 'add_edge', edge: { source: 'Checkout', target: 'Create order', type: 'calls' } },
+      ],
+    });
+  });
+
+  it('derives a view on first ask, without writing one', async () => {
+    const { body } = await call<ViewBody>('GET', '/api/diagrams/client-test/client-view');
+    expect(body.clientView.nodes.map((n) => n.name)).toEqual(['Browse', 'Checkout']);
+    // The endpoint is plumbing, and nothing has been saved yet.
+    expect(body.clientView.nodes.map((n) => n.name)).not.toContain('Create order');
+    expect(body.changes.hasChanges).toBe(false);
+
+    const stored = await call<{ diagram: { clientView: unknown } }>('GET', '/api/diagrams/client-test');
+    expect(stored.body.diagram.clientView).toBeNull();
+  });
+
+  it('saves one when asked to sync, and keeps it up to date after', async () => {
+    const first = await call<{ clientView: { nodes: unknown[] } }>(
+      'POST',
+      '/api/diagrams/client-test/client-view/sync',
+    );
+    expect(first.status).toBe(200);
+    expect(first.body.clientView.nodes).toHaveLength(2);
+
+    await call('POST', '/api/diagrams/client-test/batch', {
+      operations: [{ op: 'add_block', block: { type: 'ui_screen', name: 'Confirmation' } }],
+    });
+
+    const second = await call<{ report: { added: string[] } }>(
+      'POST',
+      '/api/diagrams/client-test/client-view/sync',
+    );
+    expect(second.body.report.added).toContain('Confirmation');
+  });
+
+  it('applies what the client changed, and can be asked to plan it first', async () => {
+    // Stand in for the editor: a box the client added, saved with the diagram.
+    const read = await call<{ diagram: Record<string, unknown> }>('GET', '/api/diagrams/client-test');
+    const diagram = read.body.diagram;
+    const view = diagram['clientView'] as { nodes: Record<string, unknown>[] };
+    view.nodes.push({
+      id: 'cvn_sms',
+      blockId: null,
+      type: 'job',
+      name: 'Text the customer',
+      description: 'Let them know it shipped',
+      order: view.nodes.length,
+      origin: 'client',
+    });
+    await call('PUT', '/api/diagrams/client-test', { diagram });
+
+    const plan = await call<{ operations: { op: string }[]; applied: boolean }>(
+      'POST',
+      '/api/diagrams/client-test/client-view/apply',
+      { dryRun: true },
+    );
+    expect(plan.body.applied).toBe(false);
+    expect(plan.body.operations.map((o) => o.op)).toEqual(['add_block']);
+
+    const done = await call<{ diagram: { blocks: { name: string; tags: string[] }[] } }>(
+      'POST',
+      '/api/diagrams/client-test/client-view/apply',
+      {},
+    );
+    const created = done.body.diagram.blocks.find((b) => b.name === 'Text the customer');
+    expect(created?.tags).toContain('from-client');
+  });
+});

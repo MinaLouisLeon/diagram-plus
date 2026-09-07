@@ -2,7 +2,8 @@ import type { Diagram } from './diagram.js';
 import type { Block } from './blocks.js';
 import { BLOCK_CATALOG } from './catalog.js';
 import { EDGE_TYPE_INFO } from './edges.js';
-import { buildProjectTree, type TreeOptions } from './tree.js';
+import { buildProjectTree } from './tree.js';
+import type { TreeOptions } from './fold.js';
 import { treeToMarkdown, treeToText } from './tree-render.js';
 
 /**

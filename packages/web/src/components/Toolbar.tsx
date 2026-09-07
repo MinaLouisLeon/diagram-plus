@@ -12,7 +12,7 @@ interface ToolbarProps {
 }
 
 export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
-  const { current, connection, saving, dirty, panel, canUndo, canRedo, validation, diagrams } =
+  const { current, connection, saving, dirty, panel, view, canUndo, canRedo, validation, diagrams } =
     useEditorState();
   const { root } = useProject();
   const stats = current ? diagramStats(current) : null;
@@ -51,6 +51,25 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
             </span>
           </div>
           <span className={`pill ${current.status}`}>{current.status}</span>
+
+          {/* Two documents, one file: the diagram it is built from, and the
+              view the client is shown. */}
+          <div className="seg" role="group" aria-label="Which view">
+            <button
+              className={`btn small${view === 'diagram' ? ' primary' : ''}`}
+              onClick={() => store.setView('diagram')}
+              title="The technical diagram — every block and connection"
+            >
+              Diagram
+            </button>
+            <button
+              className={`btn small${view === 'client' ? ' primary' : ''}`}
+              onClick={() => store.setView('client')}
+              title="The plain-language view to review with a client, and edit with them"
+            >
+              Client view
+            </button>
+          </div>
         </>
       ) : null}
 
@@ -64,9 +83,17 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
           <button className="btn subtle icon" title="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onClick={() => store.redo()}>
             ↷
           </button>
-          <button className="btn" title="Arrange blocks by dependency" onClick={() => store.runLayout('LR')}>
-            Tidy up
-          </button>
+          {view === 'diagram' ? (
+            <button
+              className="btn"
+              title="Arrange blocks by dependency"
+              onClick={() => store.runLayout('LR')}
+            >
+              Tidy up
+            </button>
+          ) : null}
+          {view === 'diagram' ? (
+            <>
           <button
             className={`btn${panel === 'validation' ? ' primary' : ''}`}
             onClick={() => store.setPanel('validation')}
@@ -94,13 +121,9 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
           >
             Spec
           </button>
-          <button
-            className={`btn${panel === 'tree' ? ' primary' : ''}`}
-            onClick={() => store.setPanel('tree')}
-            title="The diagram as a plain tree — what to show a non-technical reviewer"
-          >
-            Client view
-          </button>
+            </>
+          ) : null}
+
           <button
             className={`btn${dirty ? ' primary' : ''}`}
             disabled={!dirty || saving}

@@ -22,7 +22,7 @@
 ```
 ┌──────────────┐         ┌──────────────────────────┐         ┌──────────────┐
 │  Claude Code │──stdio──│  @diagram-plus/mcp       │────┐    │   Browser    │
-└──────────────┘         │  (MCP server, 27 tools)  │    │    │  editor UI   │
+└──────────────┘         │  (MCP server, 31 tools)  │    │    │  editor UI   │
                          └──────────────────────────┘    │    └──────┬───────┘
                                                           ▼           │ HTTP+WS
                                         ┌──────────────────────────┐  │
@@ -147,11 +147,31 @@ edits the diagram.
       rather than quietly dropped
 - [x] Three renderers: indented text, Markdown, and a Mermaid flowchart of the tree
       (a fraction of the size of the whole-diagram one)
-- [x] **Client view** panel in the editor, with a client/technical toggle and the
-      filters live; every row clicks back to its block on the canvas
-- [x] **Present** — full-screen, large type, collapsible, `Esc` to leave
+- [x] **Client view** as a whole view in the editor, with a client/technical toggle
+      and the filters live; every box clicks back to its block on the canvas
+- [x] **Present** — full-screen, no editing chrome, `Esc` to leave
 - [x] `read_project_tree` MCP tool, `tree`/`tree-markdown` export formats,
       `GET /api/diagrams/:slug/tree`, and `dgp tree`
+
+### Phase 10 — The client edits it back
+
+The view a client is shown is worth more if they can change it while looking at it,
+and worth nothing if those changes cannot reach the design.
+
+- [x] `core/fold.ts` — the folding rules (which blocks are drawn, which are walked
+      through, what the step through them is called) extracted so the tree and the
+      canvas cannot disagree about what a client is being shown
+- [x] `core/client-view.ts` — the client view as a stored document on the diagram:
+      boxes carrying the block they stand for, arrows carrying their conditions, a
+      remembered walkthrough order, and tombstones for what was deleted
+- [x] `core/client-sync.ts` — derive, reconcile, diff and apply. Reconciling keeps
+      the client's wording, their boxes and their deletions; applying turns their
+      boxes into real blocks tagged `from-client`
+- [x] A full-page **boxes and arrows** editor: drag to arrange, drag to connect,
+      rename in place, the full type picker, decision questions and outcomes,
+      reordering, and a strip along the bottom counting what is out of step
+- [x] Four MCP tools — `read_client_view`, `update_client_view`, `sync_client_view`,
+      `apply_client_view` — and the REST routes behind them
 
 ---
 
@@ -164,14 +184,16 @@ edits the diagram.
 | 2 — Spec + layout | ✅ done | `spec.ts`, `layout.ts`, `analysis.ts`, `export.ts` |
 | 3 — Server + CLI | ✅ done | `packages/server` — REST, WebSocket, file watch, `dgp` |
 | 4 — Web editor | ✅ done | `packages/web` — canvas, palette, generated inspector, panels |
-| 5 — MCP server | ✅ done | `packages/mcp` — 26 tools, 1 resource, 2 prompts |
+| 5 — MCP server | ✅ done | `packages/mcp` — 31 tools, 1 resource, 2 prompts |
 | 6 — Implementation bridge | ✅ done | status gating, per-block progress, build-order panel |
 | 7 — Tests + docs | ✅ done | 143 tests, README, generated block reference, MCP reference |
 | 8 — Sharing | ✅ done | `core/transfer.ts`, import dialog, `dgp import`, `import_diagram` |
-| 9 — Explaining | ✅ done | `core/tree.ts`, `core/tree-render.ts`, Client view panel, Present mode, `read_project_tree` |
+| 9 — Explaining | ✅ done | `core/tree.ts`, `core/tree-render.ts`, Present mode, `read_project_tree` |
+| 10 — The client edits it back | ✅ done | `core/fold.ts`, `core/client-view.ts`, `core/client-sync.ts`, the client canvas, four `*_client_view` tools |
 
-**Everything in this roadmap is built.** `npm test` runs 173 tests across the three
-non-UI packages, including an end-to-end pass over the whole loop and over the
-export/import round trip; the editor was driven in a real browser to confirm the
-canvas, the inspector, live sync, the progress panel, the import dialog and the
-client view all work.
+**Everything in this roadmap is built.** `npm test` runs 220 tests across the three
+non-UI packages, including an end-to-end pass over the whole loop, the export/import
+round trip and the client-view round trip in both directions; the editor was driven
+in a real browser to confirm the canvas, the inspector, live sync, the progress
+panel, the import dialog and the client view — including editing it and applying
+those edits to the diagram — all work.

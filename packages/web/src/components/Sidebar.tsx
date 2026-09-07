@@ -188,7 +188,7 @@ function DeleteDiagramDialog({
 }
 
 function Palette() {
-  const { catalog } = useEditorState();
+  const { catalog, view } = useEditorState();
   if (!catalog) return null;
 
   const onDragStart = (event: DragEvent, type: BlockType) => {
@@ -197,6 +197,14 @@ function Palette() {
   };
 
   const addToCanvas = (type: BlockType) => {
+    // The palette serves both documents: in the client view it is the full
+    // type picker for a box the client has just asked for.
+    if (store.getState().view === 'client') {
+      // No position: added this way it belongs to the auto-layout, not to a
+      // spot on screen the user never chose.
+      store.clientEdit([{ op: 'add_node', type, name: BLOCK_CATALOG[type].defaultName }]);
+      return;
+    }
     const added = store.apply([
       {
         op: 'add_block',
@@ -213,7 +221,7 @@ function Palette() {
   return (
     <>
       <p className="hint" style={{ margin: '2px 4px 8px' }}>
-        Drag a block onto the canvas.
+        {view === 'client' ? 'Drag one in to add a box.' : 'Drag a block onto the canvas.'}
       </p>
       {catalog.categories.map((category) => {
         const types = catalog.blockTypes.filter((info) => info.category === category.id);

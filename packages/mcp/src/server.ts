@@ -8,13 +8,19 @@ import {
   addBlocks,
   addEdges,
   applyBatch,
+  applyClientView,
   autoLayout,
   buildOrder,
   buildProjectTree,
   deleteBlocks,
   deleteEdges,
+  deriveClientView,
+  describeClientViewDiff,
   describeSchemaError,
   diagramStats,
+  diffClientView,
+  editClientView,
+  ensureClientView,
   exportDiagram,
   findBlock,
   generateBlockSpec,
@@ -23,6 +29,8 @@ import {
   markImplemented,
   parseTransfer,
   planImport,
+  reconcileClientView,
+  renderClientView,
   moveBlocks,
   treeToMarkdown,
   treeToText,
@@ -30,6 +38,7 @@ import {
   updateEdge,
   validateDiagram,
   type BatchOperation,
+  type ClientViewOperation,
   type Diagram,
   type TreeFilter,
   type TreeOptions,
@@ -46,6 +55,7 @@ import {
   blockPatchSchema,
   blockRef,
   blockTypeEnum,
+  clientViewOperationSchema,
   diagramRef,
   edgeInputSchema,
   edgeTypeEnum,
@@ -462,6 +472,213 @@ export function createMcpServer(options: McpServerOptions): McpServer {
             .join('\n'),
         );
       }),
+  );
+
+  /* ================================================================ *
+   * The client view
+   * ================================================================ */
+
+  /**
+   * The client view is a second document, stored inside the diagram: the same
+   * project as plain boxes and arrows, which the user edits in front of their
+   * client. It drifts from the technical diagram on purpose — that drift is
+   * the record of what the client asked for — and these four tools are how it
+   * is read, changed, and brought back into line in either direction.
+   */
+  server.registerTool(
+    'read_client_view',
+    {
+      title: 'Read the client view',
+      description:
+        'Read the plain-language view the user reviews with their client: boxes, arrows, the ' +
+        'conditions between them, and — the important part — what the client changed that the ' +
+        'technical diagram does not have yet. Read this before applying anything.',
+      inputSchema: {
+        diagram: diagramRef,
+        refresh: z
+          .boolean()
+          .optional()
+          .describe(
+            'Rebuild it from the diagram first, keeping the client\'s edits. Off by default so ' +
+              'reading never changes anything.',
+          ),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ diagram, refresh = false }) =>
+      withDiagram(diagram, (d) => {
+        const view = refresh
+          ? reconcileClientView(d, ensureClientView(d)).view
+          : ensureClientView(d);
+        const changes = diffClientView(d, view);
+        return text(
+          [
+            renderClientView(d, view),
+            '',
+            changes.hasChanges
+              ? 'Use apply_client_view to carry these into the technical diagram, or ' +
+                'update_client_view to change the client view itself.'
+              : '',
+            `The user reviews this at ${editorUrl}/d/${d.slug} — the Client view tab.`,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        );
+      }),
+  );
+
+  server.registerTool(
+    'update_client_view',
+    {
+      title: 'Edit the client view',
+      description:
+        'Change the client view itself — add, reword, remove or reconnect boxes, or set the ' +
+        'walkthrough order. Use it to prepare a view before a review, or to write up what was ' +
+        'agreed in one. It does not touch the technical diagram; apply_client_view does that.',
+      inputSchema: {
+        diagram: diagramRef,
+        operations: z
+          .array(clientViewOperationSchema)
+          .min(1)
+          .describe('Edits, applied in order. Later ones can refer to boxes added by earlier ones.'),
+      },
+    },
+    async ({ diagram, operations }) =>
+      mutate(diagram, (draft) => {
+        const result = editClientView(ensureClientView(draft), operations as ClientViewOperation[]);
+        draft.clientView = result.view;
+        const lines = [
+          `Applied ${result.applied} of ${operations.length} edit(s) to the client view.`,
+        ];
+        if (result.errors.length) {
+          lines.push(
+            ...result.errors.map((e) => `  operation ${e.index} (${e.op}): ${e.message}`),
+          );
+        }
+        lines.push('', describeClientViewDiff(diffClientView(draft, result.view)));
+        return lines.join('\n');
+      }),
+  );
+
+  server.registerTool(
+    'sync_client_view',
+    {
+      title: 'Bring the client view up to date with the diagram',
+      description:
+        'Rebuild the client view from the technical diagram without losing what the client did ' +
+        'to it: their wording is kept, their boxes are kept, their deletions stay deleted. Use ' +
+        'it after changing the diagram, so the next review shows the current design.',
+      inputSchema: {
+        diagram: diagramRef,
+        audience: z
+          .enum(['client', 'technical'])
+          .optional()
+          .describe('client (default) folds endpoints, services and data models away.'),
+        showConditions: z
+          .boolean()
+          .optional()
+          .describe('Turn decisions and conditional connections into branches. Default true.'),
+        showData: z.boolean().optional().describe('Include data models and datastores. Default false.'),
+        rebuild: z
+          .boolean()
+          .optional()
+          .describe(
+            'Throw the current client view away and derive a fresh one. Loses every edit made ' +
+              'in front of the client, so ask first.',
+          ),
+        types: z.array(blockTypeEnum).optional().describe('Only let these block types appear.'),
+        groups: z.array(z.string()).optional().describe('Only blocks in these groups, by id or name.'),
+        tags: z.array(z.string()).optional().describe('Only blocks carrying one of these tags.'),
+        search: z.string().optional().describe('Only blocks whose name or summary matches.'),
+      },
+    },
+    async ({ diagram, rebuild = false, types, groups, tags, search, ...rest }) =>
+      mutate(diagram, (draft) => {
+        const filter: TreeFilter = {};
+        if (types?.length) filter.types = types;
+        if (groups?.length) filter.groups = groups;
+        if (tags?.length) filter.tags = tags;
+        if (search) filter.search = search;
+        const options: TreeOptions = { ...rest };
+        if (Object.keys(filter).length) options.filter = filter;
+
+        if (rebuild || !draft.clientView) {
+          draft.clientView = deriveClientView(draft, options);
+          return `Built a fresh client view: ${draft.clientView.nodes.length} boxes, ${draft.clientView.edges.length} arrows.`;
+        }
+
+        const result = reconcileClientView(draft, draft.clientView, options);
+        draft.clientView = result.view;
+        const lines = [
+          `The client view is up to date: ${result.view.nodes.length} boxes, ${result.view.edges.length} arrows.`,
+        ];
+        if (result.added.length) lines.push(`  new from the diagram: ${result.added.join(', ')}`);
+        if (result.updated.length) lines.push(`  reworded from the diagram: ${result.updated.join(', ')}`);
+        if (result.orphaned.length) {
+          lines.push(`  their block has gone: ${result.orphaned.join(', ')}`);
+        }
+        lines.push('', describeClientViewDiff(diffClientView(draft, result.view)));
+        return lines.join('\n');
+      }),
+  );
+
+  server.registerTool(
+    'apply_client_view',
+    {
+      title: 'Apply the client view to the technical diagram',
+      description:
+        'Carry what the client changed into the real diagram: their new boxes become blocks ' +
+        'tagged from-client, their rewordings become block names, their arrows become ' +
+        'connections. The new blocks arrive thin — fill in the endpoint, the fields and the ' +
+        'wiring afterwards. Run with dryRun first if you want to see the plan.',
+      inputSchema: {
+        diagram: diagramRef,
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe('List the operations without running them.'),
+        includeRemovals: z
+          .boolean()
+          .optional()
+          .describe(
+            'Also delete the blocks the client removed. Off by default — a deletion is the one ' +
+              'thing that cannot be undone from the other document.',
+          ),
+      },
+    },
+    async ({ diagram, dryRun = false, includeRemovals = false }) => {
+      if (dryRun) {
+        return withDiagram(diagram, (d) => {
+          const result = applyClientView(d, { includeRemovals, dryRun: true });
+          if (!result.operations.length) return text(result.summary);
+          return text(
+            block(
+              `${result.summary} Nothing has been changed.`,
+              JSON.stringify(result.operations, null, 2),
+            ),
+          );
+        });
+      }
+
+      return mutate(diagram, (draft) => {
+        const result = applyClientView(draft, { includeRemovals });
+        const lines = [result.summary];
+        if (result.batch?.errors.length) {
+          lines.push(
+            ...result.batch.errors.map((e) => `  operation ${e.index} (${e.op}): ${e.message}`),
+          );
+        }
+        if (result.batch?.createdBlocks.length) {
+          lines.push(
+            '',
+            'These blocks came from the client and have nothing but a name and a line:',
+            ...result.batch.createdBlocks.map((b) => `  ${b.name} (${b.type})`),
+            'Fill them in with update_block, and connect them to the rest.',
+          );
+        }
+        return lines.join('\n');
+      });
+    },
   );
 
   /* ================================================================ *

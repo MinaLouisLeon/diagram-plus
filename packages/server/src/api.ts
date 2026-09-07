@@ -7,17 +7,23 @@ import {
   EDGE_TYPES,
   RevisionConflictError,
   applyBatch,
+  applyClientView,
   assignDiagramContent,
   autoLayout,
   buildOrder,
   buildProjectTree,
   catalogList,
+  describeClientViewDiff,
+  deriveClientView,
   diagramStats,
+  diffClientView,
   exportDiagram,
+  ensureClientView,
   generateSpec,
   importDiagram,
   isExportFormat,
   parseTreeOptions,
+  reconcileClientView,
   safeParseDiagram,
   validateDiagram,
   type BatchOperation,
@@ -317,6 +323,79 @@ export function createApiRouter(options: ApiOptions): Router {
   router.get('/api/diagrams/:slug/tree', async (ctx) => {
     const diagram = await read(ctx.params['slug']!);
     return { tree: buildProjectTree(diagram, parseTreeOptions((key) => ctx.query.get(key))) };
+  });
+
+  /* ---- the client view --------------------------------------------- */
+
+  /**
+   * The other document: boxes and arrows in plain language, which the client
+   * edits during a review. It lives inside the diagram file, so an ordinary
+   * save persists it and the live socket carries it to anyone else watching.
+   */
+  router.get('/api/diagrams/:slug/client-view', async (ctx) => {
+    const diagram = await read(ctx.params['slug']!);
+    const options = parseTreeOptions((key) => ctx.query.get(key));
+    const view = diagram.clientView
+      ? diagram.clientView
+      : deriveClientView(diagram, options);
+    return { clientView: view, changes: diffClientView(diagram, view) };
+  });
+
+  /** Rebuild it from the diagram, keeping everything the client did to it. */
+  router.post('/api/diagrams/:slug/client-view/sync', async (ctx) => {
+    const body = (await ctx.body()) as Record<string, unknown>;
+    const options = parseTreeOptions((key) => {
+      const value = (body as Record<string, unknown>)[key];
+      return value === undefined || value === null ? ctx.query.get(key) : String(value);
+    });
+
+    let report: { added: string[]; updated: string[]; orphaned: string[] } | null = null;
+    const diagram = await write(ctx.params['slug']!, (draft) => {
+      if (draft.clientView) {
+        const result = reconcileClientView(draft, draft.clientView, options);
+        draft.clientView = result.view;
+        report = { added: result.added, updated: result.updated, orphaned: result.orphaned };
+      } else {
+        draft.clientView = deriveClientView(draft, options);
+        report = { added: [], updated: [], orphaned: [] };
+      }
+    }, revisionOf(body['expectedRevision']));
+
+    return {
+      diagram,
+      clientView: diagram.clientView,
+      report,
+      changes: diffClientView(diagram, ensureClientView(diagram)),
+    };
+  });
+
+  /** Carry what the client changed into the technical diagram. */
+  router.post('/api/diagrams/:slug/client-view/apply', async (ctx) => {
+    const body = (await ctx.body()) as Record<string, unknown>;
+    const includeRemovals = body['includeRemovals'] === true;
+
+    if (body['dryRun'] === true) {
+      const diagram = await read(ctx.params['slug']!);
+      const result = applyClientView(diagram, { includeRemovals, dryRun: true });
+      return { operations: result.operations, summary: result.summary, applied: false };
+    }
+
+    let summary = '';
+    let operations: unknown[] = [];
+    const diagram = await write(ctx.params['slug']!, (draft) => {
+      const result = applyClientView(draft, { includeRemovals });
+      summary = result.summary;
+      operations = result.operations;
+    }, revisionOf(body['expectedRevision']));
+
+    return {
+      diagram,
+      clientView: diagram.clientView,
+      operations,
+      summary,
+      applied: true,
+      changes: describeClientViewDiff(diffClientView(diagram, ensureClientView(diagram))),
+    };
   });
 
   return router;

@@ -4,7 +4,7 @@ import { Inspector } from './components/Inspector';
 import { Sidebar } from './components/Sidebar';
 import { Toolbar } from './components/Toolbar';
 import { BottomPanel } from './components/Panels';
-import { TreePresentation } from './components/ClientView';
+import { ClientPresentation, ClientView } from './components/ClientView';
 import { ImportDialog } from './components/ImportDialog';
 import { NewDiagramDialog } from './components/NewDiagramDialog';
 import { McpSettings } from './components/McpSettings';
@@ -151,14 +151,20 @@ export function App() {
   return (
     <div className="app">
       <Toolbar onNewDiagram={openDialog} onOpenSettings={openSettings} />
-      <div className={`workspace${state.current ? '' : ' no-inspector'}`}>
+      <div
+        className={`workspace${state.current && state.view === 'diagram' ? '' : ' no-inspector'}`}
+      >
         <Sidebar onNewDiagram={openDialog} />
         <div className="canvas-area">
-          {state.current ? <Canvas /> : <EmptyState loading={state.loading} onNew={openDialog} />}
-          <BottomPanel />
+          {state.current ? (
+            state.view === 'client' ? <ClientView /> : <Canvas />
+          ) : (
+            <EmptyState loading={state.loading} onNew={openDialog} />
+          )}
+          {state.view === 'client' ? null : <BottomPanel />}
           <Notices />
         </div>
-        {state.current ? (
+        {state.current && state.view === 'diagram' ? (
           <aside className="inspector">
             <Inspector />
           </aside>
@@ -166,7 +172,7 @@ export function App() {
       </div>
       {dialogOpen ? <NewDiagramDialog onClose={() => setDialogOpen(false)} /> : null}
       {settingsOpen ? <McpSettings onClose={() => setSettingsOpen(false)} /> : null}
-      <TreePresentation />
+      <ClientPresentation />
       <ImportDialog />
       <UnsavedDialog />
     </div>

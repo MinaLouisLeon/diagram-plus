@@ -100,3 +100,62 @@ export const batchOperationSchema = z.discriminatedUnion('op', [
 
 export type BlockInputArg = z.infer<typeof blockInputSchema>;
 export type EdgeInputArg = z.infer<typeof edgeInputSchema>;
+
+/**
+ * Edits to the client view — the plain-language document a client is shown and
+ * edits during a review. Boxes are addressed by name or by id, because whoever
+ * is asking for the change is reading the names.
+ */
+const clientBranchSchema = z.object({
+  label: z.string().describe('What this outcome is called, e.g. "declined".'),
+  when: z.string().optional().describe('When it happens, e.g. "the card was declined".'),
+});
+
+export const clientNodeRef = z
+  .string()
+  .describe('Box to act on: its exact name in the client view, or its id.');
+
+export const clientViewOperationSchema = z.discriminatedUnion('op', [
+  z.object({
+    op: z.literal('add_node'),
+    name: z.string().describe('What the client calls it. Plain language, no jargon.'),
+    type: blockTypeEnum
+      .optional()
+      .describe('What it really is. Defaults to ui_screen; use note when it is not decided yet.'),
+    description: z.string().optional().describe('One supporting line under the name.'),
+    condition: z.string().optional().describe('For a decision: the question being asked.'),
+    branches: z.array(clientBranchSchema).optional().describe('For a decision: the outcomes.'),
+    note: z.string().optional().describe('What the client actually said, kept verbatim.'),
+    after: clientNodeRef.optional().describe('Put it after this box in the walkthrough.'),
+  }),
+  z.object({
+    op: z.literal('update_node'),
+    node: clientNodeRef,
+    name: z.string().optional(),
+    type: blockTypeEnum.optional(),
+    description: z.string().optional(),
+    condition: z.string().optional(),
+    branches: z.array(clientBranchSchema).optional(),
+    note: z.string().optional(),
+  }),
+  z.object({ op: z.literal('remove_node'), node: clientNodeRef }),
+  z.object({
+    op: z.literal('add_edge'),
+    source: clientNodeRef,
+    target: clientNodeRef,
+    type: edgeTypeEnum.optional().describe('Defaults to navigation — "this leads to that".'),
+    label: z.string().optional(),
+    condition: z.string().optional().describe('When this path is taken.'),
+  }),
+  z.object({ op: z.literal('remove_edge'), source: clientNodeRef, target: clientNodeRef }),
+  z.object({
+    op: z.literal('reorder'),
+    order: z
+      .array(clientNodeRef)
+      .describe('The walkthrough order. Boxes left out keep their place at the end.'),
+  }),
+  z.object({
+    op: z.literal('set_notes'),
+    notes: z.string().describe('Free text from the review, kept with the view.'),
+  }),
+]);

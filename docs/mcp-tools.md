@@ -1,6 +1,6 @@
 # MCP tools
 
-The diagram-plus MCP server exposes 27 tools, 1 resource and 2 prompts. Every tool
+The diagram-plus MCP server exposes 31 tools, 1 resource and 2 prompts. Every tool
 that targets a diagram takes `diagram` — its slug, its id, or its exact name.
 
 Tool descriptions carry the block payload fields inline, so Claude knows what it can
@@ -59,6 +59,10 @@ it when the design has to be reviewed with someone non-technical, rather than bu
 | `types`, `groups`, `tags`, `status`, `search` | Filters. A block ruled out never appears, but still conducts the flow, so the screens either side of a hidden endpoint stay connected |
 
 Whatever the filters remove is counted in a footnote rather than disappearing quietly.
+
+This is the read-only reading of the diagram. For the view the client actually
+edits — a stored document with their wording and their additions in it — see
+`read_client_view` below.
 
 ### `validate_diagram`
 Dangling connections, empty blocks, duplicate names, relationships that do not make
@@ -141,6 +145,73 @@ Name, description, project goal, tech stack, notes.
 
 ### `delete_diagram`
 Deletes the file. Ask the user first.
+
+---
+
+## The client view
+
+A second document, stored inside the diagram file: the same project as plain boxes
+and arrows, in the words the client uses. The user reviews it with their client and
+edits it while they talk, so it drifts from the technical diagram on purpose — that
+drift is the record of what was asked for. These four tools read it, change it, and
+bring the two documents back into line in either direction.
+
+Start with `read_client_view`. Nothing is applied to the technical diagram until
+`apply_client_view` is called.
+
+### `read_client_view`
+Boxes, arrows, the conditions between them, and — the part that matters — what the
+client changed that the technical diagram does not have yet.
+
+| Argument | What it does |
+|---|---|
+| `refresh` | Rebuild it from the diagram first, keeping the client's edits. Off by default, so reading never changes anything |
+
+Every box says whether it was added in the review, reworded there, or has lost the
+block it stood for.
+
+### `update_client_view`
+Edits the client view itself and nothing else. Use it to prepare a view before a
+review, or to write up what was agreed in one.
+
+`operations` is applied in order; later ones can refer to boxes added by earlier
+ones. Boxes are addressed by their exact name or their id.
+
+| Operation | Fields |
+|---|---|
+| `add_node` | `name`, `type` (any block type; defaults to `ui_screen`), `description`, `condition` and `branches` for a decision, `note` for what the client actually said, `after` to place it in the walkthrough |
+| `update_node` | `node`, then any of `name`, `type`, `description`, `condition`, `branches`, `note` |
+| `remove_node` | `node` — leaves a tombstone, so the next sync does not put it back |
+| `add_edge` | `source`, `target`, `type` (defaults to `navigation`), `label`, `condition` |
+| `remove_edge` | `source`, `target` |
+| `reorder` | `order` — the walkthrough order; anything left out keeps its place at the end |
+| `set_notes` | `notes` — free text from the review |
+
+### `sync_client_view`
+Rebuilds the view from the technical diagram **without losing what the client did to
+it**: their wording is kept, their boxes are kept, their deletions stay deleted. Run
+it after changing the diagram, so the next review shows the current design.
+
+| Argument | What it does |
+|---|---|
+| `audience` | `client` (default) folds the plumbing away; `technical` keeps every block |
+| `showConditions`, `showData` | As for `read_project_tree` |
+| `types`, `groups`, `tags`, `search` | Filters, stored with the view so a later sync asks the same question |
+| `rebuild` | Throw the current view away and derive a fresh one. This loses every edit made in front of the client — ask first |
+
+### `apply_client_view`
+Carries what the client changed into the technical diagram: their new boxes become
+blocks of whatever type they were given, tagged `from-client`; their rewordings
+become block names; their arrows become connections.
+
+| Argument | What it does |
+|---|---|
+| `dryRun` | List the operations without running them |
+| `includeRemovals` | Also delete the blocks the client removed. Off by default — a deletion is the one thing that cannot be undone from the other document |
+
+The blocks it creates arrive thin: a name and a line. Working out that "text the
+customer when it ships" is really a job plus an external service, and wiring it to
+the rest, is the next piece of work — the tool response says which blocks need it.
 
 ---
 

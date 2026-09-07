@@ -742,3 +742,140 @@ pre.spec {
 .tree.large .tree-row { padding: 6px 10px 6px 0; }
 .tree.large .tree-text em { font-size: 13.5px; }
 .tree.large .tree-twist { width: 16px; font-size: 12px; }
+
+/* ---------- the client view ---------- */
+
+.client-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+.client-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 6px;
+  padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg-panel);
+}
+.client-bar input,
+.client-bar select {
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 3px 7px; font-size: 12px; font-family: inherit;
+}
+.client-bar input:focus, .client-bar select:focus { outline: none; border-color: var(--accent); }
+
+.client-body { flex: 1; min-height: 0; display: flex; }
+.client-canvas { flex: 1; min-width: 0; }
+
+.client-list { flex: 1; min-width: 0; overflow: auto; padding: 18px 24px 40px; }
+.client-list-actions { display: flex; gap: 8px; margin-bottom: 14px; }
+
+/* ---------- a box ---------- */
+
+.client-node {
+  --tint: var(--accent);
+  width: 260px; min-height: 96px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--tint);
+  border-radius: var(--radius);
+  padding: 10px 13px 11px;
+  display: flex; flex-direction: column; gap: 5px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.22);
+  cursor: grab;
+}
+.client-node.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+/* Added in the review and not yet in the technical diagram. */
+.client-node.fresh { border-style: dashed; border-top-style: solid; }
+.client-node.orphaned { opacity: 0.62; }
+
+.client-node-head { display: flex; align-items: baseline; gap: 8px; }
+.client-node-name { font-weight: 600; font-size: 15px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.client-node-kind {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--tint); flex: none;
+}
+.client-node-input {
+  flex: 1; min-width: 0; font: inherit; font-weight: 600; font-size: 15px;
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 1px 5px;
+}
+.client-node-asks { font-size: 13px; color: var(--warning); }
+.client-node-line { font-size: 12.5px; color: var(--text-muted); line-height: 1.4; }
+
+.client-node-branches { display: flex; flex-wrap: wrap; gap: 4px; margin-top: auto; }
+.client-branch {
+  font-size: 10.5px; padding: 1px 7px; border-radius: 999px;
+  background: var(--bg-input); border: 1px solid var(--border); color: var(--text-muted);
+}
+
+.client-node-marks { display: flex; flex-wrap: wrap; gap: 4px; }
+.client-mark {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 1px 6px; border-radius: 4px; border: 1px solid transparent;
+}
+.client-mark.new { color: var(--success); border-color: color-mix(in srgb, var(--success) 45%, transparent); }
+.client-mark.reworded,
+.client-mark.order { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+.client-mark.gone { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+
+.client-edge .react-flow__edge-path { stroke: var(--border-strong); stroke-width: 1.6px; }
+.client-edge .react-flow__edge-text { font-size: 11px; fill: var(--text-muted); }
+
+/* ---------- the box being edited ---------- */
+
+.client-inspector {
+  flex: none; width: 320px; overflow: auto;
+  border-left: 1px solid var(--border); background: var(--bg-panel);
+  padding: 14px 16px 26px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.client-inspector-head { display: flex; align-items: baseline; gap: 8px; }
+.client-inspector-head strong { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+
+.client-inspector label,
+.client-branches .label,
+.client-inspector-order .label {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim);
+}
+.client-inspector input,
+.client-inspector select,
+.client-inspector textarea {
+  font: inherit; font-size: 13px; text-transform: none; letter-spacing: normal;
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 8px;
+}
+.client-inspector input:focus,
+.client-inspector select:focus,
+.client-inspector textarea:focus { outline: none; border-color: var(--accent); }
+.client-inspector textarea { resize: vertical; }
+
+.client-branches { display: flex; flex-direction: column; gap: 6px; }
+.client-branch-row { display: flex; gap: 5px; align-items: center; }
+.client-branch-row input:first-child { flex: 0 0 88px; min-width: 0; }
+.client-branch-row input:nth-child(2) { flex: 1; min-width: 0; }
+
+.client-inspector-order { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.client-inspector-order .label { flex: 1; }
+.client-inspector-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ---------- what is out of step ---------- */
+
+.client-strip {
+  flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 14px; border-top: 1px solid var(--border);
+  background: var(--bg-panel); font-size: 12.5px;
+}
+.client-strip.quiet { color: var(--text-dim); }
+.client-strip-list {
+  flex-basis: 100%; margin: 6px 0 2px; padding: 0 0 0 4px; list-style: none;
+  display: flex; flex-direction: column; gap: 4px; color: var(--text-muted);
+  max-height: 168px; overflow: auto;
+}
+.client-strip-list li { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.client-strip .link {
+  background: none; border: none; padding: 0; font: inherit;
+  color: var(--accent); cursor: pointer; text-decoration: underline;
+}
+
+/* Presenting: the canvas fills the window and stops being editable. */
+.present-body.canvas { padding: 0; display: flex; flex: 1; min-height: 0; }

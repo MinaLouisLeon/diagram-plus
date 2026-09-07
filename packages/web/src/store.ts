@@ -1,13 +1,19 @@
 import { useSyncExternalStore } from 'react';
 import {
   applyBatch,
+  applyClientView,
   autoLayout,
   buildProjectTree,
   bundleFileName,
   createBundle,
+  deriveClientView,
   diagramFileName,
+  diffClientView,
+  editClientView,
+  layoutClientView,
   parseTransfer,
   planImport,
+  reconcileClientView,
   serializeBundle,
   serializeDiagramFile,
   treeToMarkdown,
@@ -15,6 +21,9 @@ import {
   validateDiagram,
   type BatchOperation,
   type BatchResult,
+  type ClientView,
+  type ClientViewDiff,
+  type ClientViewOperation,
   type Diagram,
   type DiagramStatus,
   type DiagramSummary,
@@ -41,7 +50,13 @@ import { unsavedPrompt, type UnsavedReason } from './unsaved';
  * rather than merged underneath them; the save then wins.
  */
 
-export type Panel = 'validation' | 'spec' | 'progress' | 'tree' | null;
+export type Panel = 'validation' | 'spec' | 'progress' | null;
+
+/**
+ * Which document is filling the workspace: the technical diagram, or the
+ * plain-language view a client is shown.
+ */
+export type EditorView = 'diagram' | 'client';
 
 export interface EditorState {
   connection: 'connecting' | 'open' | 'closed';
@@ -53,8 +68,18 @@ export interface EditorState {
   selectedBlocks: string[];
   selectedEdges: string[];
   panel: Panel;
-  /** How the client view is built. Lives here so presenting keeps the settings. */
+  /** Which of the two documents fills the workspace. */
+  view: EditorView;
+  /** How the client view is built. Mirrored into the view when it is saved. */
   treeOptions: TreeOptions;
+  /**
+   * A client view derived for a diagram that has never had one saved. Held
+   * here rather than in the diagram so that opening the tab to look does not
+   * mark the file as changed; the first edit commits it.
+   */
+  clientDraft: ClientView | null;
+  /** Boxes selected in the client view. */
+  selectedClient: string[];
   /** True while the client view is filling the window for a review. */
   presenting: boolean;
   /** True while a save is in flight. */
@@ -91,7 +116,10 @@ class EditorStore {
     selectedBlocks: [],
     selectedEdges: [],
     panel: null,
+    view: 'diagram',
     treeOptions: {},
+    clientDraft: null,
+    selectedClient: [],
     presenting: false,
     saving: false,
     dirty: false,
@@ -156,6 +184,8 @@ class EditorStore {
       dirty: false,
       selectedBlocks: [],
       selectedEdges: [],
+      selectedClient: [],
+      clientDraft: null,
       externalEdit: null,
     });
 
@@ -220,10 +250,25 @@ class EditorStore {
     if (!(await this.confirmDiscard('switch'))) return;
     this.undoStack = [];
     this.redoStack = [];
-    this.set({ loading: true, selectedBlocks: [], selectedEdges: [] });
+    this.set({
+      loading: true,
+      selectedBlocks: [],
+      selectedEdges: [],
+      selectedClient: [],
+      clientDraft: null,
+    });
     try {
       const { diagram } = await api.getDiagram(slug);
-      this.setDiagram(diagram, { loading: false, error: null, dirty: false, externalEdit: null });
+      this.setDiagram(diagram, {
+        loading: false,
+        error: null,
+        dirty: false,
+        externalEdit: null,
+        // A saved client view remembers how it was built; the controls should
+        // open showing that, not the last diagram's settings.
+        treeOptions: diagram.clientView?.options ?? {},
+      });
+      if (this.state.view === 'client') this.primeClientView();
     } catch (err) {
       this.set({ loading: false, error: describe(err) });
     }
@@ -609,8 +654,136 @@ class EditorStore {
 
   /* ---- the client view -------------------------------------------------- */
 
+  /**
+   * Which of the two documents is on screen. They are separate views of the
+   * same file rather than a canvas and a panel, because the client view is
+   * something you work in for an hour with somebody watching, not something
+   * you glance at.
+   */
+  setView(view: EditorView): void {
+    if (view === this.state.view) return;
+    this.set({ view, selectedClient: [] });
+    if (view === 'client') this.primeClientView();
+  }
+
+  /**
+   * The client view as it stands: the one saved in the file, or a freshly
+   * derived draft if the file has never had one.
+   *
+   * The draft is held in the editor rather than written into the diagram, so
+   * opening the tab to look at it does not mark the file as changed. The first
+   * actual edit is what commits it.
+   */
+  clientView(): ClientView | null {
+    const current = this.state.current;
+    if (!current) return null;
+    return current.clientView ?? this.state.clientDraft;
+  }
+
+  private primeClientView(): void {
+    const current = this.state.current;
+    if (!current || current.clientView || this.state.clientDraft) return;
+    this.set({ clientDraft: deriveClientView(current, this.state.treeOptions) });
+  }
+
+  /** Commit a changed view to the local copy of the diagram. */
+  private commitClientView(view: ClientView, history = true): void {
+    const current = this.state.current;
+    if (!current) return;
+    if (history) this.pushHistory();
+    const next: Diagram = structuredClone(current);
+    next.clientView = view;
+    this.set({ clientDraft: null });
+    this.edit(next);
+  }
+
+  /**
+   * Edit the client view. Every change made in front of a client — a rename, a
+   * new box, an arrow — arrives here, in the same vocabulary the MCP tools
+   * use, so Claude and the person in the meeting are making the same kind of
+   * change to the same document.
+   */
+  clientEdit(operations: ClientViewOperation[], options: { history?: boolean } = {}): void {
+    const view = this.clientView();
+    if (!view || !operations.length) return;
+    const result = editClientView(view, operations);
+    if (result.errors.length) {
+      this.set({ error: result.errors[0]?.message ?? 'That change could not be made.' });
+    }
+    if (!result.applied) return;
+    this.commitClientView(result.view, options.history !== false);
+  }
+
+  /** Re-flow the boxes, including the ones that were dragged. */
+  tidyClientView(): void {
+    const view = this.clientView();
+    if (!view) return;
+    this.commitClientView(layoutClientView(view, { includePinned: true }));
+  }
+
+  /** Bring the view up to date with the diagram, keeping the client's work. */
+  syncClientView(): void {
+    const current = this.state.current;
+    const view = this.clientView();
+    if (!current || !view) return;
+    const result = reconcileClientView(current, view, this.state.treeOptions);
+    this.commitClientView(result.view);
+    const parts: string[] = [];
+    if (result.added.length) parts.push(`${result.added.length} new`);
+    if (result.updated.length) parts.push(`${result.updated.length} reworded`);
+    if (result.orphaned.length) parts.push(`${result.orphaned.length} no longer in the diagram`);
+    this.set({
+      notice: parts.length
+        ? `Client view updated from the diagram: ${parts.join(', ')}.`
+        : 'The client view was already up to date.',
+    });
+  }
+
+  /**
+   * Carry what the client changed into the technical diagram.
+   *
+   * The same operation `apply_client_view` performs over MCP — offered here
+   * too because after a review the user is already looking at the changes and
+   * should not have to go and ask for them to be applied.
+   */
+  applyClientView(includeRemovals = false): void {
+    const current = this.state.current;
+    if (!current) return;
+    const view = this.clientView();
+    if (!view) return;
+
+    this.pushHistory();
+    const next: Diagram = structuredClone(current);
+    next.clientView = view;
+    const result = applyClientView(next, { includeRemovals });
+    this.set({ clientDraft: null, notice: result.summary });
+    this.edit(next);
+  }
+
+  /** What the client view has that the diagram does not, and the other way. */
+  clientChanges(): ClientViewDiff | null {
+    const current = this.state.current;
+    const view = this.clientView();
+    return current && view ? diffClientView(current, view) : null;
+  }
+
+  selectClient(ids: string[]): void {
+    this.set({ selectedClient: ids });
+  }
+
   setTreeOptions(patch: Partial<TreeOptions>): void {
-    this.set({ treeOptions: { ...this.state.treeOptions, ...patch } });
+    const treeOptions = { ...this.state.treeOptions, ...patch };
+    this.set({ treeOptions });
+
+    // The audience and the filters are part of the client view document, so
+    // changing them re-derives it — keeping everything the client did to it.
+    const current = this.state.current;
+    if (!current) return;
+    if (current.clientView) {
+      this.commitClientView(reconcileClientView(current, current.clientView, treeOptions).view);
+    } else {
+      this.set({ clientDraft: deriveClientView(current, treeOptions) });
+    }
   }
 
   setTreeFilter(patch: Partial<TreeFilter>): void {
@@ -623,9 +796,13 @@ class EditorStore {
     this.setTreeOptions({ filter });
   }
 
-  /** Fill the window with the tree — the state to be in on a call with a client. */
+  /** Fill the window — the state to be in on a call with a client. */
   present(on: boolean): void {
     this.set({ presenting: on, panel: on ? null : this.state.panel });
+    if (on) {
+      this.set({ view: 'client' });
+      this.primeClientView();
+    }
   }
 
   async exportTree(format: 'tree' | 'tree-markdown'): Promise<void> {
