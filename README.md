@@ -302,6 +302,24 @@ and what stops an absolutely-positioned mock-up that cannot be built responsivel
 Screens are never silently lost. Delete a block from the diagram and its design is
 flagged, not destroyed; re-word a screen here and the next sync keeps your wording.
 
+#### Nothing is ever drawn on top of anything else
+
+Two rules hold on every write, whoever made it — Claude over MCP, the editor, the
+REST API:
+
+- **No element is placed at x/y outside a `frame`.** Whoever writes a tree is
+  guessing how tall the thing above it came out, and guessed coordinates pile the
+  screen into a heap. A tree written that way is not rejected; it is settled back
+  into the stack it was written in, in the order it was written, and the caller is
+  told so it stops doing it.
+- **No two artboards overlap.** Giving a screen a bigger frame — a new device, a
+  drag on the resize handle — used to bury the screen laid out beside it, because
+  the grid was measured before the frame grew. Now the neighbours are pushed clear,
+  in walkthrough order, and artboards a person has dragged are treated as fixed.
+
+Both are repaired on read too, so a file written before this holds still opens
+clean.
+
 #### It reaches the implementation
 
 `read_implementation_spec` returns the design system and, under every screen, the

@@ -28,7 +28,11 @@ export function allElementTypesHint(): string {
 
 /** The house rules. Short, because they are repeated on several tools. */
 export const DESIGN_RULES = [
-  'Nest stacks rather than positioning anything by hand — a design placed at x/y cannot be built responsively.',
+  'Never set x/y or absolute. Put one thing below another by making it the next child of a ' +
+    'column stack, and space it with gap and padding. You cannot know how tall a heading or a ' +
+    'wrapped line renders, so guessed coordinates land elements on top of each other — and a ' +
+    'screen of overlapping text is the one thing that cannot be shown to a client. Outside a ' +
+    'frame they are ignored and the element is settled back into the flow.',
   'Refer to tokens (accent, surface, heading.lg, radius md), never to raw hex, unless you are defining the token itself.',
   'Write the real words. A screen full of "Lorem ipsum" or "Button" is not a design anybody can build from.',
   'Every button either calls something (action) or goes somewhere (navigatesTo). One with neither is a hole.',
@@ -80,9 +84,11 @@ export function designCatalogJson(type?: ElementType) {
             width: '"fill" | "hug" | pixels',
             height: '"fill" | "hug" | pixels',
             grow: 'share of the leftover space',
-            absolute: 'free placement — only inside a frame, and avoid it',
-            x: 'pixels from the parent left, when absolute',
-            y: 'pixels from the parent top, when absolute',
+            absolute:
+              'free placement. Only honoured inside a frame — anywhere else it is dropped and ' +
+              'the element goes back into the flow. Do not reach for it: use a stack.',
+            x: 'pixels from the parent left. Only inside a frame',
+            y: 'pixels from the parent top. Only inside a frame',
           },
           style: {
             text: 'a typography token name, e.g. heading.lg',

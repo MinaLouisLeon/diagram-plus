@@ -221,3 +221,13 @@ export function createDesignDocument(input: CreateDesignInput): DesignDocument {
 
 /** Artboard spacing on the design canvas — one gutter, used everywhere. */
 export const ARTBOARD_GAP = 120;
+
+/**
+ * The title strip above an artboard, in canvas pixels.
+ *
+ * It sits above `position.y` in the flow, so an artboard is taller than its
+ * frame. Layout has to reserve it or two rows of screens touch — and the
+ * canvas is the one thing the user shows a client, so "nearly clear" is not
+ * good enough.
+ */
+export const ARTBOARD_BAR = 28;

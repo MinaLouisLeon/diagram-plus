@@ -39,6 +39,8 @@ export interface ElementViewProps {
   system: DesignSystem;
   /** Which way the containing element runs — decides what "fill" means. */
   parentDirection?: 'row' | 'column';
+  /** What holds it — only a `frame` honours a child placed at x/y. */
+  parentType?: string;
   selectedId: string | null;
   onSelect: (id: string) => void;
   /** Called when an element is dropped onto this one, or beside it. */
@@ -59,7 +61,7 @@ const LABELLED = new Set([
 ]);
 
 export function ElementView(props: ElementViewProps) {
-  const { element, system, parentDirection = 'column', selectedId, onSelect, presenting } = props;
+  const { element, system, parentDirection = 'column', parentType, selectedId, onSelect, presenting } = props;
   const info = ELEMENT_CATALOG[element.type];
   const selected = !presenting && selectedId === element.id;
 
@@ -74,7 +76,7 @@ export function ElementView(props: ElementViewProps) {
     [element.id, onSelect, presenting],
   );
 
-  const box = elementStyle(element, system, parentDirection);
+  const box = elementStyle(element, system, parentDirection, parentType);
   const control = <Control {...props} />;
 
   // A field carries its own label and helper line, which sit outside the box
@@ -202,6 +204,7 @@ function Children({ props, of }: { props: ElementViewProps; of: DesignElement })
           {...props}
           element={child}
           parentDirection={direction}
+          parentType={of.type}
         />
       ))}
     </>
@@ -232,6 +235,7 @@ function Repeated({ props, of }: { props: ElementViewProps; of: DesignElement })
                   {...props}
                   element={child}
                   parentDirection={of.layout.direction}
+                  parentType={of.type}
                   selectedId={null}
                   presenting
                 />
@@ -248,7 +252,7 @@ function Control(props: ElementViewProps) {
   const { element, system } = props;
   const ink = mutedInk(system);
   const line = hairline(system);
-  const box = elementStyle(element, system, props.parentDirection ?? 'column');
+  const box = elementStyle(element, system, props.parentDirection ?? 'column', props.parentType);
 
   const contained = (children: ReactNode) => (
     <div style={{ ...containerStyle(element), width: '100%', height: '100%' }}>{children}</div>
@@ -548,7 +552,7 @@ function Control(props: ElementViewProps) {
 
 /** The inner box of a field: fills whatever the element's own styling gave it. */
 function fieldBox(props: ElementViewProps): CSSProperties {
-  const box = elementStyle(props.element, props.system, props.parentDirection ?? 'column');
+  const box = elementStyle(props.element, props.system, props.parentDirection ?? 'column', props.parentType);
   const labelled = props.element.label || props.element.helper;
   return {
     display: 'flex',

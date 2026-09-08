@@ -486,6 +486,39 @@ export function generateSpec(diagram: Diagram, options: SpecOptions = {}): strin
     ).line();
     doc.line(renderDesignSystem(opts.design.system));
     doc.line();
+
+    doc.heading(2, 'Building the screens');
+    doc.line(
+      'The outline under each screen is the design, not a suggestion of one. The user has ' +
+        'probably shown it to their client; what gets built has to be the screen they were ' +
+        'shown. So for every screen marked approved:',
+    ).line();
+    doc.bullet('Build every element that is listed, and nothing that is not.');
+    doc.bullet('Keep the nesting and the order. A child of a stack is a child of that stack.');
+    doc.bullet('Use the words as written — labels, headings, button text, placeholders, helpers.');
+    doc.bullet(
+      'Honour `value ←` as the data it binds to and `does →` / `goes →` as the call or the route.',
+    );
+    doc.bullet(
+      'Translate the layout into the stack\'s own idiom — flex, grid, SwiftUI, Compose — ' +
+        'rather than copying pixel positions. `fill`, `hug`, gap and padding are the intent.',
+    );
+    doc.line();
+    doc.line(
+      'If a screen cannot be built as drawn, stop and say which screen and why. Do not quietly ' +
+        'design a different one.',
+    ).line();
+
+    const unapproved = [...opts.design.screens]
+      .sort((a, b) => a.order - b.order)
+      .filter((screen) => screen.status !== 'approved');
+    if (unapproved.length) {
+      doc.line(
+        `**Not approved yet:** ${unapproved
+          .map((s) => `${s.variant ? `${s.name} — ${s.variant}` : s.name} (${s.status})`)
+          .join(', ')}. Ask the user before building these.`,
+      ).line();
+    }
   }
 
   if (order.phases.length) {

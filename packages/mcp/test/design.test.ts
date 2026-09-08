@@ -299,6 +299,78 @@ describe('the design tools', () => {
     expect(text).toContain('Quantity');
   });
 
+  it('tells the caller when it settled a tree written in coordinates', async () => {
+    await seedDiagram();
+    await call('sync_screen_designs', { diagram: 'shop' });
+
+    const { text } = await call('design_screen', {
+      diagram: 'shop',
+      screen: 'Products',
+      root: {
+        type: 'stack',
+        layout: { direction: 'column', gap: 24 },
+        children: [
+          { type: 'heading', text: 'Products', layout: { absolute: true, x: 32, y: 32 } },
+          { type: 'search', label: 'Find', layout: { absolute: true, x: 32, y: 80 } },
+        ],
+      },
+    });
+
+    expect(text).toContain('Corrected on the way in');
+    expect(text).toContain('settled back into the flow');
+    // And the outline it reports back is the tree as it now is, so the model
+    // is not left believing it drew something it did not.
+    expect(text).not.toContain('at 32,32');
+
+    const design = await designs.read('shop');
+    const products = design.screens.find((s) => s.name === 'Products');
+    expect(products?.root.children.map((c) => c.type)).toEqual(['heading', 'search']);
+    expect(products?.root.children.every((c) => !c.layout.absolute)).toBe(true);
+  });
+
+  it('never leaves two artboards on top of each other after a device change', async () => {
+    await seedDiagram();
+    await call('sync_screen_designs', { diagram: 'shop' });
+
+    const { text } = await call('design_screen', {
+      diagram: 'shop',
+      screen: 'Login',
+      device: 'wide',
+      root: { type: 'stack', children: [{ type: 'heading', text: 'Sign in' }] },
+    });
+    expect(text).toContain('moved clear');
+
+    const design = await designs.read('shop');
+    for (const a of design.screens) {
+      for (const b of design.screens) {
+        if (a.id === b.id) continue;
+        const apart =
+          a.position.x + a.frame.width <= b.position.x ||
+          b.position.x + b.frame.width <= a.position.x ||
+          a.position.y + a.frame.height <= b.position.y ||
+          b.position.y + b.frame.height <= a.position.y;
+        expect(apart, `${a.name} overlaps ${b.name}`).toBe(true);
+      }
+    }
+  });
+
+  it('tells the implementer to build the approved screens exactly', async () => {
+    await seedDiagram();
+    await call('sync_screen_designs', { diagram: 'shop' });
+    await call('update_screen_design', {
+      diagram: 'shop',
+      operations: [{ op: 'update_screen', screen: 'Login', status: 'approved' }],
+    });
+
+    const { text } = await call('read_implementation_spec', { diagram: 'shop' });
+    expect(text).toContain('the same elements, the same nesting and order');
+    expect(text).toContain('**Approved.** Build this exactly');
+    // And the one nobody has approved is named, rather than passed off as
+    // designed alongside it.
+    expect(text).toContain('Not approved yet');
+    expect(text).toContain('Products');
+  });
+
   it('carries the designs across a rename, and deletes them with the diagram', async () => {
     await seedDiagram();
     await call('sync_screen_designs', { diagram: 'shop' });

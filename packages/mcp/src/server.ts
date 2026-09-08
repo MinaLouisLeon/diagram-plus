@@ -374,6 +374,19 @@ export function createMcpServer(options: McpServerOptions): McpServer {
               'inventing the interface as you build it.',
           );
         }
+        if (design?.screens.length) {
+          const unapproved = design.screens.filter((s) => s.status !== 'approved');
+          notes.push(
+            'The screen outlines below are the design the user reviewed. Build each approved ' +
+              'screen element for element: the same elements, the same nesting and order, the ' +
+              'same words, the same bindings and actions. Translate the layout into this stack\'s ' +
+              'idiom, never a different screen. If one cannot be built as drawn, say which and why.' +
+              (unapproved.length
+                ? `\n\n${unapproved.length} of ${design.screens.length} screen(s) are not approved ` +
+                  `yet (${unapproved.map((s) => s.name).join(', ')}). Ask the user before building those.`
+                : ''),
+          );
+        }
         return text((notes.length ? `${notes.join('\n\n')}\n\n` : '') + spec);
       }),
   );

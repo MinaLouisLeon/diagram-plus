@@ -1,5 +1,6 @@
 import type { Diagram } from './diagram.js';
 import { createDesignDocument } from './design-factory.js';
+import { relaxArtboards, settleFreePlacement } from './design-ops.js';
 import { deriveDesign, reconcileDesign } from './design-sync.js';
 import {
   DesignDocumentSchema,
@@ -28,6 +29,32 @@ import {
  * The write queue, the revision check and the atomic write are the same
  * bargain as for diagrams: two writers, one file, last-read-wins refused.
  */
+
+/**
+ * Put a document read off disk back inside its own rules.
+ *
+ * Everything written from here on holds the two invariants — no element placed
+ * at x/y outside a frame, no two artboards on top of each other — but files
+ * already on disk were written before they existed, and somebody may have
+ * hand-edited the JSON. Repairing on the way in means the editor, the spec and
+ * the MCP tools all see a document that is true, rather than each having to
+ * remember to work around one that is not.
+ *
+ * Nothing is written here. The next real edit persists the repair.
+ */
+function repairDesign(document: DesignDocument): DesignDocument {
+  let changed = false;
+  const screens = document.screens.map((screen) => {
+    const { root, settled } = settleFreePlacement(screen.root);
+    if (!settled.length) return screen;
+    changed = true;
+    return { ...screen, root };
+  });
+
+  const relaxed = relaxArtboards(changed ? screens : document.screens);
+  if (!changed && !relaxed.moved.length) return document;
+  return { ...document, screens: relaxed.screens };
+}
 
 export class DesignNotFoundError extends Error {
   constructor(public readonly slug: string) {
@@ -91,7 +118,8 @@ export class DesignStore {
     }
     const document = parseDesign(raw);
     // The filename is authoritative, so a renamed file still resolves.
-    return document.slug === slug ? document : { ...document, slug };
+    const named = document.slug === slug ? document : { ...document, slug };
+    return repairDesign(named);
   }
 
   async read(slug: string): Promise<DesignDocument> {

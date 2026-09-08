@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createDiagram } from '../src/factory.js';
 import { addBlocks, addEdges } from '../src/operations.js';
 import {
+  ARTBOARD_BAR,
   ELEMENT_CATALOG,
   ELEMENT_TYPES,
   createElement,
@@ -14,6 +15,7 @@ import {
   layoutDesign,
   parseDesign,
   reconcileDesign,
+  relaxArtboards,
   renderElementOutline,
   renderScreenOutline,
   walkElements,
@@ -386,6 +388,154 @@ describe('arranging the canvas', () => {
     const forced = layoutDesign(dragged, { includePinned: true });
     expect(screenNamed(forced, 'Products').position.x).not.toBe(5000);
     expect(screenNamed(forced, 'Products').pinned).toBe(false);
+  });
+});
+
+/** Every pair of artboards that is drawn on top of another, gutter included. */
+function overlappingArtboards(document: DesignDocument): string[] {
+  const boxes = document.screens.map((s) => ({
+    name: s.name,
+    x: s.position.x,
+    y: s.position.y,
+    right: s.position.x + s.frame.width,
+    bottom: s.position.y + s.frame.height + ARTBOARD_BAR,
+  }));
+  const clashes: string[] = [];
+  for (let i = 0; i < boxes.length; i++) {
+    for (let k = i + 1; k < boxes.length; k++) {
+      const a = boxes[i]!;
+      const b = boxes[k]!;
+      if (a.x < b.right && b.x < a.right && a.y < b.bottom && b.y < a.bottom) {
+        clashes.push(`${a.name} × ${b.name}`);
+      }
+    }
+  }
+  return clashes;
+}
+
+describe('artboards never overlap', () => {
+  it('moves neighbours clear when a screen is given a bigger frame', () => {
+    // The bug this exists for: a model changes a screen to "wide", its frame
+    // grows by 480px, and it buries the screen laid out beside it.
+    const document = deriveDesign(shop());
+    expect(overlappingArtboards(document)).toEqual([]);
+
+    const grown = apply(document, {
+      op: 'update_screen',
+      screen: 'Login',
+      device: 'wide',
+    });
+
+    expect(overlappingArtboards(grown.document)).toEqual([]);
+    expect(screenNamed(grown.document, 'Login').frame).toEqual({ width: 1920, height: 1080 });
+    expect(grown.corrections.join(' ')).toContain('overlap');
+  });
+
+  it('keeps the walkthrough order when it pulls them apart', () => {
+    const document = deriveDesign(shop());
+    const before = [...document.screens].sort((a, b) => a.position.x - b.position.x).map((s) => s.name);
+
+    const grown = apply(document, { op: 'update_screen', screen: 'Login', device: 'wide' });
+    const after = [...grown.document.screens]
+      .sort((a, b) => a.position.x - b.position.x)
+      .map((s) => s.name);
+
+    expect(after).toEqual(before);
+  });
+
+  it('treats an artboard somebody dragged as an obstacle, never as something to move', () => {
+    const document = deriveDesign(shop());
+    const dragged = apply(document, { op: 'move_screen', screen: 'Products', x: 40, y: 40 });
+
+    expect(screenNamed(dragged.document, 'Products').position).toEqual({ x: 40, y: 40 });
+    expect(overlappingArtboards(dragged.document)).toEqual([]);
+  });
+
+  it('flows the grid around pinned artboards rather than leaving a hole under one', () => {
+    const document = deriveDesign(shop());
+    const dragged = apply(document, { op: 'move_screen', screen: 'Products', x: 0, y: 0 }).document;
+
+    const tidied = layoutDesign(dragged);
+    expect(screenNamed(tidied, 'Products').position).toEqual({ x: 0, y: 0 });
+    expect(overlappingArtboards(tidied)).toEqual([]);
+  });
+
+  it('repairs a document written before the invariant existed', async () => {
+    const document = deriveDesign(shop());
+    const broken: DesignDocument = {
+      ...document,
+      screens: document.screens.map((s) => ({ ...s, position: { x: 0, y: 0 } })),
+    };
+    expect(overlappingArtboards(broken).length).toBeGreaterThan(0);
+
+    const { screens } = relaxArtboards(broken.screens);
+    expect(overlappingArtboards({ ...broken, screens })).toEqual([]);
+  });
+});
+
+describe('elements are never placed at x/y outside a frame', () => {
+  /** Every element in the document still asking to be positioned by hand. */
+  function freeElements(document: DesignDocument): string[] {
+    return document.screens.flatMap((screen) =>
+      walkElements(screen.root)
+        .filter((element) => element.layout.absolute)
+        .map((element) => `${screen.name}/${element.type}`),
+    );
+  }
+
+  const looseTree = {
+    type: 'stack',
+    name: 'Screen',
+    layout: { direction: 'column', gap: 24 },
+    children: [
+      { type: 'heading', text: 'Patients', layout: { absolute: true, x: 32, y: 32 } },
+      { type: 'search', label: 'Search', layout: { absolute: true, x: 32, y: 96 } },
+      { type: 'table', columns: ['Name'], layout: { absolute: true, x: 32, y: 160 } },
+    ],
+  };
+
+  it('settles a tree written in coordinates back into its stack', () => {
+    const document = deriveDesign(shop());
+    const drawn = apply(document, { op: 'set_tree', screen: 'Login', root: looseTree });
+
+    expect(freeElements(drawn.document)).toEqual([]);
+    expect(drawn.corrections.join(' ')).toContain('settled back into the flow');
+
+    // Settled, not discarded: the elements and their order are what was sent.
+    const root = screenNamed(drawn.document, 'Login').root;
+    expect(root.children.map((c) => c.type)).toEqual(['heading', 'search', 'table']);
+    expect(root.children[0]?.text).toBe('Patients');
+    expect(root.children[0]?.layout.x).toBe(0);
+  });
+
+  it('leaves free placement alone inside a frame, which is what a frame is for', () => {
+    const document = deriveDesign(shop());
+    const drawn = apply(document, {
+      op: 'set_tree',
+      screen: 'Login',
+      root: {
+        type: 'frame',
+        name: 'Hero',
+        children: [
+          { type: 'image', src: 'A photograph of the shop', layout: { absolute: true, x: 0, y: 0 } },
+          { type: 'badge', text: 'New', layout: { absolute: true, x: 320, y: 16 } },
+        ],
+      },
+    });
+
+    expect(freeElements(drawn.document)).toEqual(['Login/image', 'Login/badge']);
+    expect(drawn.corrections).toEqual([]);
+  });
+
+  it('settles a whole screen added in one go', () => {
+    const document = deriveDesign(shop());
+    const added = apply(document, {
+      op: 'add_screen',
+      name: 'Receipt',
+      root: looseTree,
+    });
+
+    expect(freeElements(added.document)).toEqual([]);
   });
 });
 

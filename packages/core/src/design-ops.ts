@@ -1,5 +1,6 @@
 import { ELEMENT_CATALOG, isContainer } from './design-catalog.js';
 import {
+  ARTBOARD_BAR,
   ARTBOARD_GAP,
   createElement,
   createScreen,
@@ -200,6 +201,54 @@ export function hydrateElement(raw: unknown): DesignElement {
   return { ...element, children };
 }
 
+/**
+ * Put anything placed at x/y back into the flow it belongs in.
+ *
+ * `absolute` has always meant "only inside a `frame`" — the schema says so and
+ * the design rules say so — but nothing enforced it, and a model asked to draw
+ * a screen reaches for coordinates because that is what drawing a screen looks
+ * like everywhere else. The result is the worst failure this tool has: every
+ * child leaves the flow, they all land on the coordinates the model guessed,
+ * the parent collapses to nothing, and the screen the user was going to show a
+ * client is a pile of overlapping text.
+ *
+ * Guessing is the problem, not coordinates. A model cannot know how tall a
+ * heading in `heading.lg` renders, so `y: 32` then `y: 96` is a coin toss; a
+ * column with a gap always comes out right. So a tree written that way is not
+ * rejected — it is settled back into its stack, in the order it was written,
+ * which is what the author meant by putting one element below another.
+ *
+ * Inside a `frame` it is left alone: that container exists precisely for the
+ * background, the badge over a corner, the genuine overlap.
+ */
+export function settleFreePlacement(root: DesignElement): {
+  root: DesignElement;
+  settled: string[];
+} {
+  const settled: string[] = [];
+
+  // The root has no parent to be placed against, so its own `absolute` is
+  // meaningless rather than wrong: cleared, but not worth reporting.
+  const visit = (element: DesignElement, parentType: ElementType | null): DesignElement => {
+    const children = element.children.map((child) => visit(child, element.type));
+    const loose = element.layout.absolute && parentType !== 'frame';
+    if (loose && parentType !== null) settled.push(element.name || elementWords(element));
+    return {
+      ...element,
+      layout: loose ? { ...element.layout, absolute: false, x: 0, y: 0 } : element.layout,
+      children,
+    };
+  };
+
+  return { root: visit(root, null), settled };
+}
+
+/** Something to call an element by in a message, when it has no name. */
+function elementWords(element: DesignElement): string {
+  const words = element.text || element.label || element.placeholder;
+  return words ? `${element.type} "${words}"` : element.type;
+}
+
 /* ------------------------------------------------------------------ *
  * Operations
  * ------------------------------------------------------------------ */
@@ -298,6 +347,13 @@ export interface EditDesignResult {
   document: DesignDocument;
   applied: number;
   errors: { index: number; op: string; message: string }[];
+  /**
+   * What was quietly put right on the way in: elements pulled back into the
+   * flow, artboards moved off each other. Not errors — the edit was applied —
+   * but the caller has to be told, or a model repeats the same mistake on the
+   * next nineteen screens and nobody finds out until the client does.
+   */
+  corrections: string[];
 }
 
 /** Merge a partial over an object, ignoring undefined. */
@@ -317,6 +373,7 @@ export function editDesign(
   let system = document.system;
   let notes = document.notes;
   const errors: EditDesignResult['errors'] = [];
+  const loose: string[] = [];
   let applied = 0;
 
   /** Resolve a screen by id, by "Name" or by "Name / Variant". */
@@ -333,9 +390,17 @@ export function editDesign(
     );
   };
 
+  /** Nothing reaches the document with elements floating outside a frame. */
+  const settle = (screen: ScreenDesign): ScreenDesign => {
+    const { root, settled } = settleFreePlacement(screen.root);
+    if (!settled.length) return screen;
+    loose.push(...settled.map((name) => `${screen.name || screen.id} → ${name}`));
+    return { ...screen, root };
+  };
+
   const put = (screen: ScreenDesign): void => {
     const at = screens.findIndex((s) => s.id === screen.id);
-    const next = { ...screen, updatedAt: nowIso() };
+    const next = { ...settle(screen), updatedAt: nowIso() };
     if (at >= 0) screens[at] = next;
     else screens.push(next);
   };
@@ -382,9 +447,9 @@ export function editDesign(
             position: nextArtboardPosition(preset.width),
             root: operation.root === undefined ? undefined : hydrateElement(operation.root),
           });
-          const withStates: ScreenDesign = operation.states?.length
-            ? { ...screen, states: operation.states }
-            : screen;
+          const withStates: ScreenDesign = settle(
+            operation.states?.length ? { ...screen, states: operation.states } : screen,
+          );
           const after = operation.after ? resolveScreen(operation.after) : undefined;
           if (after) screens.splice(screens.indexOf(after) + 1, 0, withStates);
           else screens.push(withStates);
@@ -644,12 +709,41 @@ export function editDesign(
     }
   });
 
+  if (!applied) return { document, applied, errors, corrections: [] };
+
+  // Last, and unconditionally: a batch that resized a frame or swapped a
+  // device has just changed how much room an artboard takes, and whoever asked
+  // for it cannot see the canvas.
+  const relaxed = relaxArtboards(screens);
+
+  const corrections: string[] = [];
+  if (loose.length) {
+    corrections.push(
+      `${loose.length} element(s) were placed at x/y outside a frame and have been settled back ` +
+        `into the flow of their container: ${loose.slice(0, 8).join(', ')}` +
+        `${loose.length > 8 ? ', …' : ''}. Nest stacks and set gap/padding instead — guessed ` +
+        'coordinates land elements on top of each other.',
+    );
+  }
+  if (relaxed.moved.length) {
+    corrections.push(
+      `${relaxed.moved.length} artboard(s) would have overlapped and were moved clear: ` +
+        `${relaxed.moved.slice(0, 8).join(', ')}${relaxed.moved.length > 8 ? ', …' : ''}. ` +
+        'Run arrange_screen_designs if you want the canvas tidied into an even grid.',
+    );
+  }
+
   return {
-    document: applied
-      ? { ...document, screens, system, notes, updatedAt: nowIso() }
-      : document,
+    document: {
+      ...document,
+      screens: relaxed.screens,
+      system,
+      notes,
+      updatedAt: nowIso(),
+    },
     applied,
     errors,
+    corrections,
   };
 }
 
@@ -664,13 +758,46 @@ export interface DesignLayoutOptions {
   includePinned?: boolean;
 }
 
+/** The space an artboard actually occupies: its frame plus its title strip. */
+interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+function rectOf(screen: ScreenDesign): Rect {
+  return {
+    x: screen.position.x,
+    y: screen.position.y,
+    width: screen.frame.width,
+    height: screen.frame.height + ARTBOARD_BAR,
+  };
+}
+
+/** Do two artboards touch, once the gutter between them is counted? */
+function collides(a: Rect, b: Rect, gap = ARTBOARD_GAP): boolean {
+  return (
+    a.x < b.x + b.width + gap &&
+    b.x < a.x + a.width + gap &&
+    a.y < b.y + b.height + gap &&
+    b.y < a.y + a.height + gap
+  );
+}
+
 /**
  * Lay the artboards out in reading order, wrapping into rows.
+ *
+ * Columns share one pitch — the widest artboard in the document — so the
+ * canvas reads as a contact sheet rather than a ragged row, which is what it
+ * has to be when somebody walks a client through it.
  *
  * An artboard that has been dragged stays where it was put, for the same
  * reason the client view leaves dragged boxes alone: people arrange these
  * while talking over them, and having that undone by the next edit is worse
- * than an imperfect grid.
+ * than an imperfect grid. The grid flows *around* those rather than reserving
+ * them a slot it will not use — a pinned artboard used to leave both a hole in
+ * the grid and itself sitting on top of whatever was under it.
  */
 export function layoutDesign(
   document: DesignDocument,
@@ -680,28 +807,98 @@ export function layoutDesign(
   if (!document.screens.length) return document;
 
   const ordered = [...document.screens].sort((a, b) => a.order - b.order);
-  const rows: ScreenDesign[][] = [];
-  for (let i = 0; i < ordered.length; i += perRow) rows.push(ordered.slice(i, i + perRow));
+  const moving = includePinned ? ordered : ordered.filter((s) => !s.pinned);
+  if (!moving.length) return document;
 
+  // One pitch for every column and every row, taken from the largest artboard
+  // there is: mixed device sizes otherwise stagger the grid, and a screen
+  // resized later then lands on its neighbour.
+  const columnPitch = Math.max(...ordered.map((s) => s.frame.width)) + ARTBOARD_GAP;
+  const rowPitch = Math.max(...ordered.map((s) => s.frame.height)) + ARTBOARD_BAR + ARTBOARD_GAP;
+
+  const fixed = includePinned ? [] : ordered.filter((s) => s.pinned).map(rectOf);
   const placed = new Map<string, { x: number; y: number }>();
-  let y = 0;
-  for (const row of rows) {
-    let x = 0;
-    for (const screen of row) {
-      placed.set(screen.id, { x, y });
-      x += screen.frame.width + ARTBOARD_GAP;
+
+  let slot = 0;
+  for (const screen of moving) {
+    // Walk on past any slot a pinned artboard is already sitting in.
+    let position = { x: (slot % perRow) * columnPitch, y: Math.floor(slot / perRow) * rowPitch };
+    while (
+      fixed.some((rect) =>
+        collides({ ...position, width: screen.frame.width, height: screen.frame.height + ARTBOARD_BAR }, rect),
+      )
+    ) {
+      slot += 1;
+      position = { x: (slot % perRow) * columnPitch, y: Math.floor(slot / perRow) * rowPitch };
     }
-    y += Math.max(...row.map((s) => s.frame.height)) + ARTBOARD_GAP;
+    placed.set(screen.id, position);
+    slot += 1;
   }
 
   return {
     ...document,
     screens: document.screens.map((screen) => {
-      if (screen.pinned && !includePinned) return screen;
       const position = placed.get(screen.id);
       if (!position) return screen;
       return { ...screen, position, pinned: includePinned ? false : screen.pinned };
     }),
     updatedAt: nowIso(),
+  };
+}
+
+/**
+ * Pull overlapping artboards apart, moving as little as possible.
+ *
+ * This is the invariant the design canvas lives or dies by: two screens drawn
+ * on top of each other are not a design anybody can show a client, and it is
+ * the one failure that is invisible to whoever caused it — a model changing a
+ * screen's device from `desktop` to `wide` grows its frame by 480px and has no
+ * idea it just buried the screen beside it.
+ *
+ * So rather than asking every caller to remember to re-tidy, `editDesign` runs
+ * this after every batch. Artboards are swept in reading order and a screen
+ * that lands on an earlier one is pushed to the right until it clears, which
+ * keeps the walkthrough order intact — the alternative, moving the screen that
+ * grew, would silently reorder the story. Pinned artboards are obstacles and
+ * never move: where a person put a screen is a decision, not a suggestion.
+ */
+export function relaxArtboards(screens: ScreenDesign[]): {
+  screens: ScreenDesign[];
+  moved: string[];
+} {
+  if (screens.length < 2) return { screens, moved: [] };
+
+  const order = [...screens].sort((a, b) => a.order - b.order);
+  const settled: Rect[] = order.filter((s) => s.pinned).map(rectOf);
+  const positions = new Map<string, { x: number; y: number }>();
+  const moved: string[] = [];
+
+  for (const screen of order) {
+    if (screen.pinned) continue;
+    const rect = rectOf(screen);
+
+    // Step right past whatever is in the way, re-checking from the start each
+    // time: clearing one neighbour can land the artboard on the next.
+    let guard = 0;
+    for (;;) {
+      const hit = settled.find((other) => collides(rect, other));
+      if (!hit || guard++ > screens.length * 2) break;
+      rect.x = hit.x + hit.width + ARTBOARD_GAP;
+    }
+
+    if (rect.x !== screen.position.x || rect.y !== screen.position.y) {
+      positions.set(screen.id, { x: Math.round(rect.x), y: Math.round(rect.y) });
+      moved.push(screen.name || screen.id);
+    }
+    settled.push(rect);
+  }
+
+  if (!moved.length) return { screens, moved: [] };
+  return {
+    screens: screens.map((screen) => {
+      const position = positions.get(screen.id);
+      return position ? { ...screen, position } : screen;
+    }),
+    moved,
   };
 }

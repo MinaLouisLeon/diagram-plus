@@ -117,6 +117,13 @@ export function elementStyle(
   element: DesignElement,
   system: DesignSystem,
   parentDirection: 'row' | 'column' = 'column',
+  /**
+   * What holds this element. Free placement is honoured inside a `frame` and
+   * nowhere else, which is what the format has always said — drawing it
+   * anywhere else would show the user a pile of overlapping boxes and call it
+   * their design. Left undefined, nothing is placed freely: the safe reading.
+   */
+  parentType?: string,
 ): CSSProperties {
   const { layout, style } = element;
   const pad = layout.padding;
@@ -150,7 +157,7 @@ export function elementStyle(
   if (layout.grow) css.flexGrow = layout.grow;
   if (element.hidden) css.opacity = 0.35;
 
-  if (layout.absolute) {
+  if (layout.absolute && parentType === 'frame') {
     css.position = 'absolute';
     css.left = layout.x;
     css.top = layout.y;

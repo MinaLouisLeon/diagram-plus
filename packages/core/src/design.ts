@@ -179,7 +179,10 @@ export const DesignLayoutSchema = z.object({
   /**
    * Free placement, in pixels from the parent's top-left. Only honoured when
    * the parent is a `frame` — everything else is a flow, on purpose, because
-   * an absolutely positioned design is not implementable as a responsive one.
+   * an absolutely positioned design is not implementable as a responsive one,
+   * and because whoever writes the coordinates is guessing how tall the thing
+   * above came out. `settleFreePlacement` drops it everywhere else, and the
+   * canvas will not draw it either.
    */
   x: z.number().default(0),
   y: z.number().default(0),

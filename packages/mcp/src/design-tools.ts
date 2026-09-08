@@ -67,6 +67,19 @@ function block(title: string, body: string, lang = 'json'): string {
   return `${title}\n\n\`\`\`${lang}\n${body}\n\`\`\``;
 }
 
+/**
+ * Put what was silently put right in front of the caller.
+ *
+ * An edit that was applied but quietly corrected is the case where saying
+ * nothing costs the most: the model believes it drew what it sent, carries on
+ * the same way for the next fifteen screens, and the person who finds out is
+ * the client looking at the canvas.
+ */
+function noteCorrections(corrections: string[]): string[] {
+  if (!corrections.length) return [];
+  return [['**Corrected on the way in**', ...corrections.map((c) => `- ${c}`)].join('\n')];
+}
+
 export function registerDesignTools(server: McpServer, options: DesignToolOptions): void {
   const { store, designs, editorUrl } = options;
 
@@ -407,9 +420,12 @@ export function registerDesignTools(server: McpServer, options: DesignToolOption
             (s.name.toLowerCase() === (target?.name.toLowerCase() ?? needle) &&
               s.variant === (variant ?? '')),
         );
-        return drawn
+        const headline = drawn
           ? `Designed **${drawn.variant ? `${drawn.name} — ${drawn.variant}` : drawn.name}**.\n\n${renderScreenOutline(drawn)}`
           : `Designed "${screen}".`;
+        // The corrections go after the outline, because the outline is what
+        // actually landed — the tree as it now is, not the tree as it was sent.
+        return [headline, ...noteCorrections(result.corrections)].join('\n\n');
       }),
   );
 
@@ -438,7 +454,7 @@ export function registerDesignTools(server: McpServer, options: DesignToolOption
         if (result.errors.length) {
           lines.push(...result.errors.map((e) => `  operation ${e.index} (${e.op}): ${e.message}`));
         }
-        return lines.join('\n');
+        return [lines.join('\n'), ...noteCorrections(result.corrections)].join('\n\n');
       }),
   );
 

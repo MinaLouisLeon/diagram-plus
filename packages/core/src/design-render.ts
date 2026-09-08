@@ -150,6 +150,29 @@ export function renderElementOutline(
   return lines.join('\n');
 }
 
+/**
+ * How far along a screen is, said plainly.
+ *
+ * This is the line that decides whether the tree below it is an instruction or
+ * a placeholder, and it has to be in the spec: an untouched wireframe seeded
+ * from a block and a design the user sat with their client and approved read
+ * exactly the same as an outline, and building the first as though it were the
+ * second is how a project ends up not looking like what was signed off.
+ */
+function statusNote(screen: ScreenDesign): string {
+  switch (screen.status) {
+    case 'approved':
+      return '**Approved.** Build this exactly: these elements, this nesting, this wording. ' +
+        'If something here cannot work, stop and say so rather than improvising a different screen.';
+    case 'drafted':
+      return '**Drafted, not yet approved.** Build it as drawn, and flag it for the user to ' +
+        'confirm before it is shown to anybody.';
+    default:
+      return '**Not designed yet** — this is a wireframe seeded from the block, not a design. ' +
+        'Ask before building it, or draw it first with design_screen.';
+  }
+}
+
 /** One screen, as the section that goes into the implementation spec. */
 export function renderScreenOutline(screen: ScreenDesign, options: OutlineOptions = {}): string {
   const preset = DEVICE_FRAMES[screen.device];
@@ -160,6 +183,8 @@ export function renderScreenOutline(screen: ScreenDesign, options: OutlineOption
     `**Design — ${label}** · ${preset.label.toLowerCase()} ${screen.frame.width}×${screen.frame.height}` +
       (screen.route ? ` · \`${screen.route}\`` : ''),
   );
+  lines.push('');
+  lines.push(statusNote(screen));
   lines.push('');
   if (screen.purpose) {
     lines.push(screen.purpose);

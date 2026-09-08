@@ -241,8 +241,11 @@ The order that works:
 
 The house rules, which the tool descriptions repeat:
 
-- Nest stacks; never position anything by hand. A design placed at x/y cannot be
-  built responsively.
+- Nest stacks; never set `x`/`y` or `absolute`. Nobody writing a tree knows how tall
+  a heading renders, so guessed coordinates land elements on top of each other —
+  and a screen of overlapping text is the one thing that cannot be shown to a
+  client. Outside a `frame` they are dropped and the element is settled back into
+  the flow of its container, which the tool tells you it did.
 - Refer to tokens (`accent`, `heading.lg`, radius `md`), not to raw hex.
 - Write the real words. A screen full of "Button" is not a design anyone can build.
 - Every button either `action`s or `navigatesTo`. One with neither is a hole.
@@ -338,8 +341,13 @@ screen whose block has been deleted is flagged, never removed.
 | `layout` | Re-arrange the artboards into a grid afterwards |
 
 ### `arrange_screen_designs`
-Lay the artboards out in a grid in walkthrough order. Cosmetic — it changes where
-screens sit on the canvas, never what is on them.
+Lay the artboards out in an even grid in walkthrough order. Cosmetic — it changes
+where screens sit on the canvas, never what is on them.
+
+You should not need it to *fix* anything: no edit is allowed to leave two artboards
+drawn on top of each other. Any change that grows a frame — a new device, a resize —
+pushes whatever it would have buried out of the way and says so in its reply. This
+tidies a canvas that is merely untidy.
 
 ### `design_progress`
 How much of the interface is designed, which blocks still have none, and the holes

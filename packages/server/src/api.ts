@@ -517,12 +517,20 @@ export function createApiRouter(options: ApiOptions): Router {
       throw new HttpError(400, 'Expected an "operations" array.');
     }
 
-    let outcome: { applied: number; errors: unknown[] } = { applied: 0, errors: [] };
+    let outcome: { applied: number; errors: unknown[]; corrections: string[] } = {
+      applied: 0,
+      errors: [],
+      corrections: [],
+    };
     const { diagram, design } = await writeDesign(
       ctx.params['slug']!,
       (draft) => {
         const result = editDesign(draft, operations as DesignOperation[]);
-        outcome = { applied: result.applied, errors: result.errors };
+        outcome = {
+          applied: result.applied,
+          errors: result.errors,
+          corrections: result.corrections,
+        };
         Object.assign(draft, result.document);
         if (body['layout'] === true) Object.assign(draft, layoutDesign(draft));
       },
