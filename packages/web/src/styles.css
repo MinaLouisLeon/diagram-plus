@@ -1003,12 +1003,12 @@ pre.spec {
   position: relative; overflow: hidden;
   border: 1px solid var(--border);
   box-shadow: 0 8px 30px rgb(0 0 0 / 0.18);
-  /* Inside here the design's own tokens rule; nothing of the editor's theme
-     may leak in, or a screen would look different from what gets built. */
-  color: #0f172a;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: 15px; line-height: 1.5; text-align: left;
+  background: #fff;
 }
+/* The screen renders in its own document, so none of the editor's styling can
+   reach it and none of its styling can reach the editor. That isolation is the
+   whole reason a design looks here exactly as it will when it is built. */
+.design-artboard-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; }
 .design-artboard.selected .design-artboard-body { border-color: var(--accent); }
 .design-artboard.orphaned .design-artboard-body { opacity: 0.6; }
 
@@ -1134,3 +1134,56 @@ pre.spec {
   background: var(--bg-panel); font-size: 12px; color: var(--text-muted);
 }
 .design-strip.quiet { color: var(--text-dim); }
+
+
+/* ---------- the palette, now a shelf of markup snippets ---------- */
+
+.design-palette-group { padding: 4px 8px 8px; }
+.design-palette-label {
+  display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-dim); padding: 6px 2px 4px;
+}
+.design-palette-items { display: flex; flex-wrap: wrap; gap: 4px; }
+.design-palette-item {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 8px; font-size: 11.5px; cursor: grab;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-panel); color: var(--text);
+}
+.design-palette-item:hover { border-color: var(--accent); color: var(--accent); }
+.design-palette-icon { opacity: 0.7; }
+
+/* ---------- a layer row ---------- */
+
+.design-layer {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 8px; font-size: 12px; cursor: default; user-select: none;
+}
+.design-layer:hover { background: var(--bg-hover, rgb(127 127 127 / 0.08)); }
+.design-layer.selected { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.design-layer-tag { font-size: 10.5px; color: var(--text-dim); flex: none; }
+.design-layer-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0;
+}
+.design-layer-flag {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-dim); border: 1px solid var(--border); border-radius: 3px; padding: 0 3px;
+}
+.twisty { width: 10px; flex: none; font-size: 9px; color: var(--text-dim); transition: transform 100ms; }
+.twisty.open { transform: rotate(0deg); }
+.twisty:not(.open):not(.spacer) { transform: rotate(-90deg); }
+.twisty.spacer { visibility: hidden; }
+
+/* ---------- the inspector, for an element ---------- */
+
+.inspector-head { display: flex; align-items: baseline; gap: 8px; padding: 12px 12px 4px; }
+.inspector-title { font-weight: 600; font-size: 13px; }
+.inspector-tag { font-size: 11px; color: var(--text-dim); }
+.inspector-section { padding: 8px 12px 12px; border-bottom: 1px solid var(--border); }
+.inspector-section h4 {
+  margin: 4px 0 8px; font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-dim); font-weight: 600;
+}
+.inspector-checks { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; margin-top: 8px; }
+.inspector-actions { display: flex; gap: 6px; padding: 12px; }
+.inspector-hint { padding: 0 12px 12px; font-size: 11.5px; color: var(--text-dim); }

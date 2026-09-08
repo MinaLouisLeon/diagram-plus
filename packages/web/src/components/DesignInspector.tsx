@@ -1,29 +1,23 @@
 import {
   DEVICE_FRAMES,
-  ELEMENT_CATALOG,
-  ELEMENT_CATEGORIES,
-  ELEMENT_TYPES,
-  elementLabel,
   type DesignDocument,
-  type DesignElement,
   type Device,
-  type ElementProp,
-  type ElementType,
+  type ElementFacts,
   type ScreenDesign,
-  type Sizing,
 } from '@diagram-plus/core/browser';
 import { store, useEditorState } from '../store';
 
 /**
  * The properties panel.
  *
- * It shows only what the selected element actually uses — a divider has no
- * placeholder, a checkbox has no columns — because a form of forty fields
- * where thirty do nothing is how a designer learns to stop reading the panel.
- * The catalog decides which apply; this only renders them.
+ * With an element selected it edits that element; with nothing selected it
+ * falls back to the artboard, since "what screen am I on and what is it for"
+ * is the other question this corner has to answer.
  *
- * With nothing selected it falls back to the artboard, since "what screen am I
- * on and what is it for" is the other question this corner has to answer.
+ * What it no longer does is edit the look. A screen is CSS now, and a panel of
+ * dropdowns over a stylesheet would be a worse way to write CSS than writing
+ * CSS. What stays here is what markup cannot say on its own: where a value
+ * comes from, what pressing something does, where it goes.
  */
 
 export function DesignInspector({
@@ -33,12 +27,12 @@ export function DesignInspector({
 }: {
   design: DesignDocument;
   screen: ScreenDesign | null;
-  element: DesignElement | null;
+  element: ElementFacts | null;
 }) {
   if (!screen) return null;
   return (
     <aside className="design-inspector">
-      {element && element.id !== screen.root.id ? (
+      {element ? (
         <ElementForm screen={screen} element={element} design={design} />
       ) : (
         <ScreenForm screen={screen} element={element} />
@@ -56,7 +50,7 @@ function ScreenForm({
   element,
 }: {
   screen: ScreenDesign;
-  element: DesignElement | null;
+  element: ElementFacts | null;
 }) {
   const { current } = useEditorState();
   const edit = (patch: Record<string, unknown>): void =>
@@ -263,6 +257,23 @@ function ScreenForm({
  * An element
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ * The selected element
+ * ------------------------------------------------------------------ */
+
+/**
+ * What the panel offers for one element.
+ *
+ * The tree's version of this form was generated from a catalog that knew a
+ * checkbox has no `columns` and a divider has no `placeholder`. HTML has no
+ * such catalog, so the form is split by what the questions *are* rather than
+ * by type: what it says, what it means, and how it looks.
+ *
+ * The middle section is the one that matters and the one that ports across
+ * unchanged — binding, action, destination, all still offered against the
+ * diagram's own endpoints, models and screens, because a design that names
+ * things the diagram does not have is how a spec goes stale.
+ */
 function ElementForm({
   design,
   screen,
@@ -270,620 +281,189 @@ function ElementForm({
 }: {
   design: DesignDocument;
   screen: ScreenDesign;
-  element: DesignElement;
+  element: ElementFacts;
 }) {
-  const { current } = useEditorState();
-  const info = ELEMENT_CATALOG[element.type];
-  const uses = new Set<ElementProp>(info.props);
+  const { current: diagram } = useEditorState();
 
-  const edit = (patch: Record<string, unknown>): void =>
+  const edit = (name: string, value: string | null): void => {
     store.designEdit([
-      { op: 'update_element', screen: screen.id, element: element.id, ...patch } as never,
+      { op: 'set_attribute', screen: screen.id, element: element.id, name, value },
     ]);
+  };
 
-  const screens = current?.blocks.filter((b) => b.type === 'ui_screen') ?? [];
-  const endpoints = current?.blocks.filter(
-    (b) => b.type === 'api_endpoint' || b.type === 'service' || b.type === 'external_service',
-  ) ?? [];
+  const endpoints = (diagram?.blocks ?? [])
+    .filter((b) => b.type === 'api_endpoint' || b.type === 'service')
+    .map((b) => b.name);
+  const screens = (diagram?.blocks ?? []).filter((b) => b.type === 'ui_screen').map((b) => b.name);
+  const models = (diagram?.blocks ?? []).filter((b) => b.type === 'data_model').map((b) => b.name);
+
+  const isPressable = element.tag === 'button' || element.tag === 'a';
+  const isField = ['input', 'textarea', 'select'].includes(element.tag);
 
   return (
     <>
-      <div className="design-inspector-head">
-        <strong>{elementLabel(element.type, element.name, element.text)}</strong>
-        <span className="design-node-kind">{info.label}</span>
-        <button
-          className="btn subtle icon"
-          onClick={() => store.selectElement(null)}
-          title="Back to the artboard"
-        >
-          ×
-        </button>
+      <div className="inspector-head">
+        <span className="inspector-title">{element.label}</span>
+        <code className="inspector-tag">{element.tag}</code>
       </div>
 
-      <label>
-        What it is
-        <select
-          value={element.type}
-          onChange={(event) => edit({ type: event.target.value as ElementType })}
-          title={info.whenToUse}
-        >
-          {ELEMENT_CATEGORIES.map((category) => (
-            <optgroup key={category.id} label={category.label}>
-              {ELEMENT_TYPES.filter((type) => ELEMENT_CATALOG[type].category === category.id).map(
-                (type) => (
-                  <option key={type} value={type}>
-                    {ELEMENT_CATALOG[type].label}
-                  </option>
-                ),
-              )}
-            </optgroup>
-          ))}
-        </select>
-      </label>
-
-      <label>
-        Layer name
-        <input
-          value={element.name}
-          placeholder={info.label}
-          onChange={(event) => edit({ name: event.target.value })}
-        />
-      </label>
-
-      {/* ---- what it says ---- */}
-      {uses.has('text') ? (
-        <label>
-          Text
+      <section className="inspector-section">
+        <h4>What it says</h4>
+        <label className="field">
+          <span>TEXT</span>
           <textarea
             rows={2}
             value={element.text}
-            placeholder="The real words, not a placeholder"
-            onChange={(event) => edit({ text: event.target.value })}
-          />
-        </label>
-      ) : null}
-
-      {uses.has('label') ? (
-        <label>
-          Label
-          <input value={element.label} onChange={(event) => edit({ label: event.target.value })} />
-        </label>
-      ) : null}
-
-      {uses.has('placeholder') ? (
-        <label>
-          Placeholder
-          <input
-            value={element.placeholder}
-            onChange={(event) => edit({ placeholder: event.target.value })}
-          />
-        </label>
-      ) : null}
-
-      {uses.has('helper') ? (
-        <label>
-          Helper line
-          <input value={element.helper} onChange={(event) => edit({ helper: event.target.value })} />
-        </label>
-      ) : null}
-
-      {uses.has('variant') ? (
-        <label>
-          Emphasis
-          <input
-            value={element.variant}
-            placeholder="primary, secondary, ghost, danger…"
-            onChange={(event) => edit({ variant: event.target.value })}
-          />
-        </label>
-      ) : null}
-
-      {uses.has('icon') ? (
-        <label>
-          Icon
-          <input
-            value={element.icon}
-            placeholder="An emoji, or an icon name"
-            onChange={(event) => edit({ icon: event.target.value })}
-          />
-        </label>
-      ) : null}
-
-      {uses.has('src') ? (
-        <label>
-          What it shows
-          <input
-            value={element.src}
-            placeholder="Described, never a file"
-            onChange={(event) => edit({ src: event.target.value })}
-          />
-        </label>
-      ) : null}
-
-      {uses.has('columns') ? (
-        <label>
-          Columns
-          <input
-            value={element.columns.join(', ')}
-            placeholder="Name, Status, Updated"
-            onChange={(event) =>
-              edit({
-                columns: event.target.value
-                  .split(',')
-                  .map((value) => value.trim())
-                  .filter(Boolean),
-              })
+            placeholder="The words on it"
+            onChange={(e) =>
+              store.designEdit([
+                { op: 'set_text', screen: screen.id, element: element.id, text: e.target.value },
+              ])
             }
           />
         </label>
-      ) : null}
+        <label className="field">
+          <span>CLASSES</span>
+          <input
+            value={element.classes.join(' ')}
+            placeholder="btn primary"
+            onChange={(e) => edit('class', e.target.value || null)}
+          />
+        </label>
+      </section>
 
-      {uses.has('options') ? <Options element={element} onChange={edit} /> : null}
-
-      {uses.has('repeat') ? (
-        <div className="design-row">
-          <label>
-            Repeats over
+      <section className="inspector-section">
+        <h4>What it means</h4>
+        {isField ? (
+          <label className="field">
+            <span>VALUE COMES FROM</span>
             <input
-              value={element.repeat?.over ?? ''}
-              placeholder="A data model, or plain words"
-              onChange={(event) =>
-                edit({ repeat: { over: event.target.value, count: element.repeat?.count ?? 3 } })
-              }
-            />
-          </label>
-          <label>
-            Show
-            <input
-              type="number"
-              min={1}
-              max={24}
-              value={element.repeat?.count ?? 3}
-              onChange={(event) =>
-                edit({ repeat: { over: element.repeat?.over ?? '', count: Number(event.target.value) } })
-              }
-            />
-          </label>
-        </div>
-      ) : null}
-
-      {/* ---- what it means ---- */}
-      <div className="design-section">
-        <span className="label">What it means</span>
-
-        {uses.has('binding') ? (
-          <label>
-            Value comes from
-            <input
+              list="dz-bindings"
               value={element.binding}
-              placeholder="state.email, or Order.total"
-              onChange={(event) => edit({ binding: event.target.value })}
-              list="design-bindings"
+              placeholder="state.email"
+              onChange={(e) => edit('data-binding', e.target.value || null)}
             />
-          </label>
-        ) : null}
-
-        {uses.has('action') ? (
-          <label>
-            Using it does
-            <input
-              value={element.action}
-              placeholder="POST /api/session, or the service it reaches"
-              onChange={(event) => edit({ action: event.target.value })}
-              list="design-actions"
-            />
-          </label>
-        ) : null}
-
-        {uses.has('navigatesTo') ? (
-          <label>
-            Goes to
-            <select
-              value={element.navigatesTo}
-              onChange={(event) => edit({ navigatesTo: event.target.value })}
-            >
-              <option value="">Nowhere</option>
-              {screens.map((block) => (
-                <option key={block.id} value={block.name}>
-                  {block.name}
-                </option>
+            <datalist id="dz-bindings">
+              {models.map((name) => (
+                <option key={name} value={`${name}.`} />
               ))}
-              {element.navigatesTo && !screens.some((b) => b.name === element.navigatesTo) ? (
-                <option value={element.navigatesTo}>{element.navigatesTo}</option>
-              ) : null}
-            </select>
+            </datalist>
           </label>
         ) : null}
 
-        {uses.has('componentId') ? (
-          <label>
-            Component
-            <select
-              value={element.componentId}
-              onChange={(event) => edit({ componentId: event.target.value })}
-            >
-              <option value="">Not chosen</option>
-              {(current?.blocks ?? [])
-                .filter((b) => b.type === 'ui_component')
-                .map((block) => (
-                  <option key={block.id} value={block.id}>
-                    {block.name}
+        {isPressable ? (
+          <>
+            <label className="field">
+              <span>DOES</span>
+              <input
+                list="dz-actions"
+                value={element.action}
+                placeholder="POST /api/session"
+                onChange={(e) => edit('data-action', e.target.value || null)}
+              />
+              <datalist id="dz-actions">
+                {endpoints.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+            </label>
+            <label className="field">
+              <span>GOES TO</span>
+              <select
+                value={element.navigatesTo}
+                onChange={(e) => edit('data-navigates-to', e.target.value || null)}
+              >
+                <option value="">Nowhere</option>
+                {screens.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
                   </option>
                 ))}
-            </select>
-          </label>
+              </select>
+            </label>
+          </>
         ) : null}
 
-        <label>
-          Only shown when
+        <label className="field">
+          <span>REPEATS OVER</span>
+          <input
+            value={element.repeat?.over ?? ''}
+            placeholder="Patient"
+            onChange={(e) => edit('data-repeat', e.target.value || null)}
+          />
+        </label>
+        <label className="field">
+          <span>ONLY WHEN</span>
           <input
             value={element.visibleWhen}
             placeholder="the basket is empty"
-            onChange={(event) => edit({ visibleWhen: event.target.value })}
+            onChange={(e) => edit('data-visible-when', e.target.value || null)}
           />
         </label>
 
-        <div className="design-checks">
-          {uses.has('required') ? (
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={element.required}
-                onChange={(event) => edit({ required: event.target.checked })}
-              />
-              Required
-            </label>
-          ) : null}
-          {uses.has('disabled') ? (
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={element.disabled}
-                onChange={(event) => edit({ disabled: event.target.checked })}
-              />
-              Disabled
-            </label>
-          ) : null}
-          <label className="check">
+        <div className="inspector-checks">
+          <label>
+            <input
+              type="checkbox"
+              checked={element.required}
+              onChange={(e) => edit('required', e.target.checked ? '' : null)}
+            />{' '}
+            Required
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={element.disabled}
+              onChange={(e) => edit('disabled', e.target.checked ? '' : null)}
+            />{' '}
+            Disabled
+          </label>
+          <label>
             <input
               type="checkbox"
               checked={element.hidden}
-              onChange={(event) => edit({ hidden: event.target.checked })}
-            />
+              onChange={(e) => edit('hidden', e.target.checked ? '' : null)}
+            />{' '}
             Hidden
           </label>
         </div>
-      </div>
+      </section>
 
-      <Layout element={element} onChange={edit} />
-      <Style element={element} design={design} onChange={edit} />
-
-      <label>
-        Notes
+      <section className="inspector-section">
+        <h4>Notes for whoever builds it</h4>
         <textarea
           rows={2}
-          value={element.notes}
-          placeholder="Anything the tree cannot say"
-          onChange={(event) => edit({ notes: event.target.value })}
+          value={design.screens.length ? element.id && '' : ''}
+          placeholder="Anything the markup cannot say"
+          onChange={(e) => edit('data-note', e.target.value || null)}
         />
-      </label>
+      </section>
 
-      <div className="design-inspector-actions">
+      <div className="inspector-actions">
         <button
-          className="btn small"
+          className="btn subtle small"
           onClick={() =>
             store.designEdit([
-              { op: 'duplicate_element', screen: screen.id, element: element.id },
+              { op: 'duplicate_node', screen: screen.id, element: element.id },
             ])
           }
         >
           Duplicate
         </button>
         <button
-          className="btn small danger"
+          className="btn subtle small danger"
           onClick={() =>
-            store.designEdit([{ op: 'remove_element', screen: screen.id, element: element.id }])
+            store.designEdit([{ op: 'remove_node', screen: screen.id, element: element.id }])
           }
         >
           Remove
         </button>
       </div>
 
-      {/* Suggestions drawn from the diagram, so a binding or an action is
-          usually one keystroke rather than a remembered string. */}
-      <datalist id="design-bindings">
-        {(current?.blocks ?? [])
-          .filter((b) => b.type === 'data_model')
-          .flatMap((b) =>
-            (b.data as { fields?: { name: string }[] }).fields?.map(
-              (field) => `${b.name}.${field.name}`,
-            ) ?? [],
-          )
-          .map((value) => (
-            <option key={value} value={value} />
-          ))}
-      </datalist>
-      <datalist id="design-actions">
-        {endpoints.map((b) => (
-          <option key={b.id} value={b.name} />
-        ))}
-      </datalist>
+      <p className="inspector-hint">
+        The look of a screen lives in its CSS, not here. Edit the shared stylesheet in the Design
+        system panel, or ask Claude to restyle it.
+      </p>
     </>
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * Sub-forms
- * ------------------------------------------------------------------ */
-
-function Options({
-  element,
-  onChange,
-}: {
-  element: DesignElement;
-  onChange: (patch: Record<string, unknown>) => void;
-}) {
-  return (
-    <div className="design-options">
-      <span className="label">Options</span>
-      {element.options.map((option, at) => (
-        <div key={at} className="design-option-row">
-          <input
-            value={option.label}
-            placeholder="Label"
-            onChange={(event) =>
-              onChange({
-                options: element.options.map((o, i) =>
-                  i === at ? { ...o, label: event.target.value } : o,
-                ),
-              })
-            }
-          />
-          <label className="check" title="Shown as the chosen one">
-            <input
-              type="checkbox"
-              checked={option.selected}
-              onChange={(event) =>
-                onChange({
-                  options: element.options.map((o, i) => ({
-                    ...o,
-                    selected: i === at ? event.target.checked : false,
-                  })),
-                })
-              }
-            />
-          </label>
-          <button
-            className="btn subtle icon"
-            title="Remove"
-            onClick={() => onChange({ options: element.options.filter((_, i) => i !== at) })}
-          >
-            ×
-          </button>
-        </div>
-      ))}
-      <button
-        className="btn small"
-        onClick={() =>
-          onChange({ options: [...element.options, { label: '', value: '', selected: false }] })
-        }
-      >
-        + Option
-      </button>
-    </div>
-  );
-}
-
-/** "fill" / "hug" / a number, as one control. */
-function SizeField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: Sizing;
-  onChange: (next: Sizing) => void;
-}) {
-  const mode = typeof value === 'number' ? 'fixed' : value;
-  return (
-    <label>
-      {label}
-      <div className="design-size">
-        <select
-          value={mode}
-          onChange={(event) => {
-            const next = event.target.value;
-            onChange(next === 'fixed' ? (typeof value === 'number' ? value : 200) : (next as Sizing));
-          }}
-        >
-          <option value="fill">Fill</option>
-          <option value="hug">Hug</option>
-          <option value="fixed">Fixed</option>
-        </select>
-        {typeof value === 'number' ? (
-          <input
-            type="number"
-            value={value}
-            onChange={(event) => onChange(Number(event.target.value))}
-          />
-        ) : null}
-      </div>
-    </label>
-  );
-}
-
-function Layout({
-  element,
-  onChange,
-}: {
-  element: DesignElement;
-  onChange: (patch: Record<string, unknown>) => void;
-}) {
-  const { layout } = element;
-  const container = ELEMENT_CATALOG[element.type].container;
-  const set = (patch: Record<string, unknown>): void => onChange({ layout: patch });
-  const pad = layout.padding;
-
-  return (
-    <div className="design-section">
-      <span className="label">Layout</span>
-
-      <div className="design-row">
-        <SizeField label="Width" value={layout.width} onChange={(width) => set({ width })} />
-        <SizeField label="Height" value={layout.height} onChange={(height) => set({ height })} />
-      </div>
-
-      {container ? (
-        <>
-          <div className="design-row">
-            <label>
-              Direction
-              <select
-                value={layout.direction}
-                onChange={(event) => set({ direction: event.target.value })}
-              >
-                <option value="column">Column</option>
-                <option value="row">Row</option>
-              </select>
-            </label>
-            <label>
-              Gap
-              <input
-                type="number"
-                min={0}
-                value={layout.gap}
-                onChange={(event) => set({ gap: Number(event.target.value) })}
-              />
-            </label>
-            {element.type === 'grid' ? (
-              <label>
-                Columns
-                <input
-                  type="number"
-                  min={0}
-                  value={layout.columns}
-                  onChange={(event) => set({ columns: Number(event.target.value) })}
-                />
-              </label>
-            ) : null}
-          </div>
-
-          <div className="design-row">
-            <label>
-              Along
-              <select
-                value={layout.justify}
-                onChange={(event) => set({ justify: event.target.value })}
-              >
-                {['start', 'center', 'end', 'between', 'around', 'evenly'].map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Across
-              <select value={layout.align} onChange={(event) => set({ align: event.target.value })}>
-                {['stretch', 'start', 'center', 'end', 'baseline'].map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-        </>
-      ) : null}
-
-      <div className="design-row">
-        {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
-          <label key={side}>
-            {side === 'top' ? 'Padding ↑' : side === 'right' ? '→' : side === 'bottom' ? '↓' : '←'}
-            <input
-              type="number"
-              min={0}
-              value={pad[side]}
-              onChange={(event) =>
-                set({ padding: { ...pad, [side]: Number(event.target.value) } })
-              }
-            />
-          </label>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function Style({
-  element,
-  design,
-  onChange,
-}: {
-  element: DesignElement;
-  design: DesignDocument;
-  onChange: (patch: Record<string, unknown>) => void;
-}) {
-  const { style } = element;
-  const set = (patch: Record<string, unknown>): void => onChange({ style: patch });
-  const { system } = design;
-
-  /** A picker over the tokens of one kind, keeping whatever was typed by hand. */
-  const tokenSelect = (label: string, value: string, names: string[], key: string) => (
-    <label>
-      {label}
-      <select value={names.includes(value) ? value : ''} onChange={(event) => set({ [key]: event.target.value })}>
-        <option value="">—</option>
-        {names.map((name) => (
-          <option key={name} value={name}>
-            {name}
-          </option>
-        ))}
-        {value && !names.includes(value) ? <option value={value}>{value}</option> : null}
-      </select>
-    </label>
-  );
-
-  const colors = system.colors.map((c) => c.name);
-
-  return (
-    <div className="design-section">
-      <span className="label">Look</span>
-
-      <div className="design-row">
-        {tokenSelect('Type', style.text, system.typography.map((t) => t.name), 'text')}
-        {tokenSelect('Colour', style.color, colors, 'color')}
-      </div>
-
-      <div className="design-row">
-        {tokenSelect('Fill', style.background, colors, 'background')}
-        {tokenSelect('Radius', style.radius, system.radii.map((r) => r.name), 'radius')}
-      </div>
-
-      <div className="design-row">
-        {tokenSelect('Border', style.border, colors, 'border')}
-        <label>
-          Width
-          <input
-            type="number"
-            min={0}
-            value={style.borderWidth}
-            onChange={(event) => set({ borderWidth: Number(event.target.value) })}
-          />
-        </label>
-        {tokenSelect('Shadow', style.shadow, system.shadows.map((s) => s.name), 'shadow')}
-      </div>
-
-      <div className="design-row">
-        <label>
-          Text sits
-          <select value={style.align} onChange={(event) => set({ align: event.target.value })}>
-            <option value="left">Left</option>
-            <option value="center">Centre</option>
-            <option value="right">Right</option>
-          </select>
-        </label>
-      </div>
-    </div>
   );
 }

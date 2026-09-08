@@ -1,22 +1,18 @@
-import type { CSSProperties } from 'react';
-import type {
-  DesignElement,
-  DesignSystem,
-  Sizing,
-} from '@diagram-plus/core/browser';
+import type { DesignDocument, DesignSystem, ScreenDesign } from '@diagram-plus/core/browser';
+import { systemToCss } from '@diagram-plus/core/browser';
 
 /**
- * Turning a design element into CSS.
+ * Assembling the page an artboard shows.
  *
- * The document stores layout intent — "fill", "hug", `gap: 16`, `heading.lg`,
- * `accent` — not a stylesheet. This is the one place that decides what those
- * mean on screen, so the canvas draws exactly what the outline in the
- * implementation spec describes, and a token changed in the panel restyles
- * every artboard at once.
+ * A screen is HTML and CSS, so the editor no longer decides what it looks
+ * like — the browser does. What is left here is putting the pieces in the
+ * right order: the tokens as custom properties, then the stylesheet every
+ * screen shares, then the screen's own CSS, then its markup.
  *
- * It is deliberately not exported to the spec: what the implementer receives
- * is the intent, in their own stack's idiom. This is only how the editor draws
- * it.
+ * It runs inside an iframe rather than in the page. That is not only for
+ * safety, though it is that too: it is the only way a screen can be styled
+ * without the editor's own CSS leaking into it, and the only way a design's
+ * `button { … }` rule can mean what it says instead of restyling the toolbar.
  */
 
 /* ------------------------------------------------------------------ *
@@ -48,168 +44,66 @@ export function radius(system: DesignSystem, value: string): string {
   return /^\d+$/.test(value) ? `${value}px` : value;
 }
 
-export function shadow(system: DesignSystem, value: string): string {
-  if (!value) return '';
-  return system.shadows.find((s) => s.name === value)?.value ?? value;
-}
-
-/** A typography token as CSS. Unknown names fall back to inheriting. */
-export function typography(system: DesignSystem, value: string): CSSProperties {
-  const token = system.typography.find((t) => t.name === value);
-  if (!token) return {};
-  return {
-    fontFamily: token.family || undefined,
-    fontSize: token.size,
-    fontWeight: token.weight,
-    lineHeight: token.lineHeight,
-    letterSpacing: token.letterSpacing ? `${token.letterSpacing}px` : undefined,
-    textTransform: token.transform === 'none' ? undefined : token.transform,
-  };
-}
-
-/* ------------------------------------------------------------------ *
- * Layout
- * ------------------------------------------------------------------ */
-
-const ALIGN: Record<string, string> = {
-  start: 'flex-start',
-  center: 'center',
-  end: 'flex-end',
-  stretch: 'stretch',
-  baseline: 'baseline',
-};
-
-const JUSTIFY: Record<string, string> = {
-  start: 'flex-start',
-  center: 'center',
-  end: 'flex-end',
-  between: 'space-between',
-  around: 'space-around',
-  evenly: 'space-evenly',
-};
-
-/**
- * How a size behaves depends on which way its parent runs: "fill" across the
- * parent's direction is a width, along it is a share of the space. Getting
- * this right is what makes a designed row actually look like the row.
- */
-function sizeAlong(
-  value: Sizing,
-  axis: 'width' | 'height',
-  parentDirection: 'row' | 'column',
-): CSSProperties {
-  const isMainAxis = (axis === 'width') === (parentDirection === 'row');
-
-  if (typeof value === 'number') {
-    return isMainAxis
-      ? { [axis]: value, flexShrink: 0, flexGrow: 0 }
-      : { [axis]: value, flexShrink: 0 };
-  }
-  if (value === 'fill') {
-    return isMainAxis ? { flexGrow: 1, flexBasis: 0, minWidth: 0, minHeight: 0 } : { [axis]: '100%' };
-  }
-  // hug
-  return isMainAxis ? { flexGrow: 0, flexShrink: 0 } : {};
-}
-
-/** The whole of an element's own box: its size, its padding, its look. */
-export function elementStyle(
-  element: DesignElement,
-  system: DesignSystem,
-  parentDirection: 'row' | 'column' = 'column',
-  /**
-   * What holds this element. Free placement is honoured inside a `frame` and
-   * nowhere else, which is what the format has always said — drawing it
-   * anywhere else would show the user a pile of overlapping boxes and call it
-   * their design. Left undefined, nothing is placed freely: the safe reading.
-   */
-  parentType?: string,
-): CSSProperties {
-  const { layout, style } = element;
-  const pad = layout.padding;
-
-  const background = color(system, style.background);
-  // A token that declares a readable colour for text on top of it supplies the
-  // text colour, so a button set to `danger` is legible without being told.
-  const text = color(system, style.color) || colorOn(system, style.background);
-
-  const css: CSSProperties = {
-    boxSizing: 'border-box',
-    padding:
-      pad.top || pad.right || pad.bottom || pad.left
-        ? `${pad.top}px ${pad.right}px ${pad.bottom}px ${pad.left}px`
-        : undefined,
-    background: background || undefined,
-    color: text || undefined,
-    border:
-      style.border && style.borderWidth
-        ? `${style.borderWidth}px solid ${color(system, style.border)}`
-        : undefined,
-    borderRadius: radius(system, style.radius) || undefined,
-    boxShadow: shadow(system, style.shadow) || undefined,
-    opacity: style.opacity === 1 ? undefined : style.opacity,
-    textAlign: style.align === 'left' ? undefined : style.align,
-    ...typography(system, style.text),
-    ...sizeAlong(layout.width, 'width', parentDirection),
-    ...sizeAlong(layout.height, 'height', parentDirection),
-  };
-
-  if (layout.grow) css.flexGrow = layout.grow;
-  if (element.hidden) css.opacity = 0.35;
-
-  if (layout.absolute && parentType === 'frame') {
-    css.position = 'absolute';
-    css.left = layout.x;
-    css.top = layout.y;
-    // Free placement is not part of a flow, so the flex sizing above would
-    // only confuse the box it is no longer in.
-    delete css.flexGrow;
-    delete css.flexBasis;
-  }
-
-  return css;
-}
-
-/** How an element arranges the children it holds. */
-export function containerStyle(element: DesignElement): CSSProperties {
-  const { layout } = element;
-
-  if (element.type === 'grid' && layout.columns > 0) {
-    return {
-      display: 'grid',
-      gridTemplateColumns: `repeat(${layout.columns}, minmax(0, 1fr))`,
-      gap: layout.gap,
-      alignItems: ALIGN[layout.align],
-    };
-  }
-
-  return {
-    display: 'flex',
-    flexDirection: layout.direction,
-    gap: layout.gap,
-    alignItems: ALIGN[layout.align],
-    justifyContent: JUSTIFY[layout.justify],
-    flexWrap: layout.wrap ? 'wrap' : undefined,
-    // A frame is the one container whose children may sit anywhere, so it has
-    // to establish the coordinate system they are placed against.
-    position: element.type === 'frame' ? 'relative' : undefined,
-  };
-}
-
 /** What a screen's background resolves to. */
 export function screenBackground(system: DesignSystem, value: string): string {
   return color(system, value) || '#ffffff';
 }
 
-/** The plain text colour for a screen, used for chrome the tokens do not cover. */
-export function defaultInk(system: DesignSystem): string {
-  return color(system, 'text') || '#0f172a';
+export function hairline(system: DesignSystem): string {
+  return color(system, 'border') || '#cbd5e1';
 }
 
 export function mutedInk(system: DesignSystem): string {
   return color(system, 'subtle') || color(system, 'muted') || '#64748b';
 }
 
-export function hairline(system: DesignSystem): string {
-  return color(system, 'border') || '#cbd5e1';
+/* ------------------------------------------------------------------ *
+ * The page inside an artboard
+ * ------------------------------------------------------------------ */
+
+/**
+ * The chrome the editor adds on top of a design, and nothing more.
+ *
+ * Selection has to be visible without being part of the design, so it is an
+ * outline drawn outside the box rather than anything that affects layout — a
+ * border would move every element by a pixel the moment you clicked it.
+ */
+const EDITOR_CHROME = `
+html, body { height: 100%; }
+body { cursor: default; }
+[data-el] { outline: 1px solid transparent; outline-offset: -1px; transition: outline-color 80ms; }
+body.picking [data-el]:hover { outline-color: rgba(37, 99, 235, 0.45); }
+body.picking [data-el].dz-selected { outline: 2px solid #2563eb; outline-offset: -1px; }
+/* A screen still being written should not be able to trap the pointer. */
+[data-el] { pointer-events: auto; }
+`;
+
+/**
+ * One screen as a whole HTML document, ready for an iframe's `srcdoc`.
+ *
+ * The order matters and is the whole contract: tokens first, because
+ * everything after refers to them; the shared stylesheet next, so a screen
+ * inherits the product's look; the screen's own CSS last, so it can override
+ * without `!important`.
+ */
+export function screenDocument(
+  design: DesignDocument,
+  screen: ScreenDesign,
+  options: { interactive?: boolean } = {},
+): string {
+  const background = screenBackground(design.system, screen.background);
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>${systemToCss(design.system)}</style>
+<style>${design.css}</style>
+<style>body { background: ${background}; }</style>
+<style>${screen.css}</style>
+<style>${EDITOR_CHROME}</style>
+</head>
+<body class="${options.interactive === false ? '' : 'picking'}">
+${screen.html}
+</body>
+</html>`;
 }
