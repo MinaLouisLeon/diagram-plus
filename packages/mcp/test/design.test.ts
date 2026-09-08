@@ -90,11 +90,16 @@ describe('the design tools', () => {
     }
   });
 
-  it('describes the element vocabulary with its rules and an example', async () => {
+  it('describes how a screen is written, with its rules and an example', async () => {
     const { text } = await call('describe_design_schema');
-    expect(text).toContain('"type": "button"');
-    expect(text).toContain('navigatesTo');
-    expect(text).toContain('Nest stacks rather than positioning anything by hand');
+    expect(text).toContain('data-binding');
+    expect(text).toContain('data-navigates-to');
+    expect(text).toContain('var(--color-accent)');
+    expect(text).toContain('.text-heading-lg');
+    // The rules and a worked example travel with it, so a screen can be drawn
+    // without a second round-trip.
+    expect(text).toContain('Write real HTML');
+    expect(text).toContain('<table data-repeat="Patient"');
   });
 
   it('seeds a wireframe per screen, already wired to the diagram', async () => {
@@ -125,49 +130,36 @@ describe('the design tools', () => {
     expect(JSON.parse(file).screens.length).toBe(2);
   });
 
-  it('designs a screen from a whole tree, minting ids and filling defaults', async () => {
+  it('designs a screen from markup, minting an id for every element', async () => {
     await seedDiagram();
     await call('sync_screen_designs', { diagram: 'shop' });
 
-    const { text, isError } = await call('design_screen', {
+    const { text } = await call('design_screen', {
       diagram: 'shop',
       screen: 'Login',
-      purpose: 'Get an existing customer back in',
-      root: {
-        type: 'stack',
-        layout: { direction: 'column', gap: 24, padding: { top: 40, right: 40, bottom: 40, left: 40 } },
-        children: [
-          { type: 'heading', text: 'Welcome back', style: { text: 'heading.lg' } },
-          {
-            type: 'form',
-            action: 'POST /api/session',
-            children: [
-              { type: 'input', label: 'Email', binding: 'state.email', required: true },
-              { type: 'button', text: 'Sign in', variant: 'primary', action: 'POST /api/session' },
-            ],
-          },
-          { type: 'link', text: 'Forgot your password?', navigatesTo: 'Reset password' },
-        ],
-      },
-      states: [{ name: 'Error', when: 'the password is wrong', changes: 'A red line above the form.' }],
+      purpose: 'Sign in to the shop',
+      html: `<main class="screen">
+        <h1 class="text-heading-lg">Welcome back</h1>
+        <form class="col">
+          <label>Email<input data-binding="state.email" required></label>
+          <button class="btn primary" data-action="POST /api/session">Sign in</button>
+        </form>
+      </main>`,
     });
 
-    expect(isError).toBe(false);
-    expect(text).toContain('Welcome back');
-    expect(text).toContain('Forgot your password?');
-    expect(text).toContain('Error');
+    expect(text).toContain('Designed **Login**');
+    expect(text).toContain('value \u2190 state.email');
+    expect(text).toContain('does \u2192 POST /api/session');
 
-    const stored = await designs.read('shop');
-    const login = stored.screens.find((s) => s.name === 'Login')!;
+    const design = await designs.read('shop');
+    const login = design.screens.find((s) => s.name === 'Login')!;
     expect(login.status).toBe('drafted');
-    expect(login.root.children).toHaveLength(3);
-    // Ids were minted for a tree that carried none.
-    expect(login.root.id).toMatch(/^els_/);
-    expect(login.root.children[0]!.id).toMatch(/^els_/);
-    // The button took the catalog's defaults rather than arriving naked.
-    const button = login.root.children[1]!.children[1]!;
-    expect(button.style.background).toBe('accent');
-    expect(button.layout.height).toBe(40);
+    expect(login.html).toContain('Welcome back');
+
+    // Every element is addressable, which is what the editor needs from it.
+    const ids = [...login.html.matchAll(/data-el="(els_[a-z0-9]+)"/g)].map((m) => m[1]);
+    expect(ids.length).toBeGreaterThan(4);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it('sets tokens and reports them back', async () => {
@@ -191,16 +183,23 @@ describe('the design tools', () => {
     const { text } = await call('update_screen_design', {
       diagram: 'shop',
       operations: [
-        { op: 'add_element', screen: 'Products', type: 'search', props: { placeholder: 'Search products' } },
-        { op: 'update_screen', screen: 'Products', status: 'drafted' },
-        { op: 'remove_element', screen: 'Products', element: 'Nothing called this' },
+        { op: 'update_screen', screen: 'Products', purpose: 'Browse everything we sell' },
+        {
+          op: 'insert_html',
+          screen: 'Products',
+          html: '<input type="search" placeholder="Search products" data-binding="state.q">',
+        },
+        { op: 'remove_node', screen: 'Products', element: 'nothing called this' },
       ],
     });
-    expect(text).toContain('Applied 2 of 3');
-    expect(text).toContain('Nothing called this');
 
-    const read = await call('read_screen_design', { diagram: 'shop', screen: 'Products' });
-    expect(read.text).toContain('Search products');
+    expect(text).toContain('Applied 2 of 3');
+    expect(text).toContain('nothing called this');
+
+    const design = await designs.read('shop');
+    const products = design.screens.find((s) => s.name === 'Products')!;
+    expect(products.purpose).toBe('Browse everything we sell');
+    expect(products.html).toContain('Search products');
   });
 
   it('adds a variant artboard for the same screen', async () => {
@@ -210,7 +209,7 @@ describe('the design tools', () => {
       diagram: 'shop',
       screen: 'Products',
       variant: 'Empty',
-      root: { type: 'stack', children: [{ type: 'text', text: 'Nothing here yet.' }] },
+      html: '<main class="screen"><p>Nothing here yet.</p></main>',
     });
 
     const stored = await designs.read('shop');
@@ -227,7 +226,7 @@ describe('the design tools', () => {
     await call('design_screen', {
       diagram: 'shop',
       screen: 'Login',
-      root: { type: 'stack', children: [{ type: 'heading', text: 'Hand-written' }] },
+      html: '<main class="screen"><h1>Hand-written</h1></main>',
     });
 
     await call('add_blocks', {
@@ -243,7 +242,7 @@ describe('the design tools', () => {
     const stored = await designs.read('shop');
     // The hand-written screen survived untouched.
     const login = stored.screens.find((s) => s.name === 'Login')!;
-    expect(login.root.children[0]!.text).toBe('Hand-written');
+    expect(login.html).toContain('Hand-written');
     // The deleted block's design is flagged, not destroyed.
     const products = stored.screens.find((s) => s.name === 'Products')!;
     expect(products.orphaned).toBe(true);
@@ -255,13 +254,9 @@ describe('the design tools', () => {
     await call('design_screen', {
       diagram: 'shop',
       screen: 'Login',
-      root: {
-        type: 'stack',
-        children: [
-          { type: 'heading', text: 'Welcome back' },
-          { type: 'button', text: 'Sign in', action: 'POST /api/session' },
-        ],
-      },
+      html:
+        '<main class="screen"><h1>Welcome back</h1>' +
+        '<button class="btn primary" data-action="POST /api/session">Sign in</button></main>',
     });
 
     const { text } = await call('read_implementation_spec', { diagram: 'shop' });
@@ -285,47 +280,40 @@ describe('the design tools', () => {
     await call('design_screen', {
       diagram: 'shop',
       screen: 'Products',
-      root: {
-        type: 'stack',
-        children: [
-          { type: 'button', text: 'Do something' },
-          { type: 'input', label: 'Quantity' },
-        ],
-      },
+      html:
+        '<main class="screen"><button>Do something</button>' +
+        '<label>Quantity<input data-el="els_qty"></label></main>',
     });
 
     const { text } = await call('design_progress', { diagram: 'shop' });
     expect(text).toContain('Do something');
-    expect(text).toContain('Quantity');
+    expect(text).toContain('input');
   });
 
-  it('tells the caller when it settled a tree written in coordinates', async () => {
+  it('tells the caller what it stripped on the way in', async () => {
     await seedDiagram();
     await call('sync_screen_designs', { diagram: 'shop' });
 
     const { text } = await call('design_screen', {
       diagram: 'shop',
       screen: 'Products',
-      root: {
-        type: 'stack',
-        layout: { direction: 'column', gap: 24 },
-        children: [
-          { type: 'heading', text: 'Products', layout: { absolute: true, x: 32, y: 32 } },
-          { type: 'search', label: 'Find', layout: { absolute: true, x: 32, y: 80 } },
-        ],
-      },
+      html:
+        '<main class="screen"><script>steal()</script>' +
+        '<h1 onclick="steal()">Products</h1>' +
+        '<img src="https://example.com/shop.jpg" alt="The shop"></main>',
     });
 
     expect(text).toContain('Corrected on the way in');
-    expect(text).toContain('settled back into the flow');
-    // And the outline it reports back is the tree as it now is, so the model
-    // is not left believing it drew something it did not.
-    expect(text).not.toContain('at 32,32');
+    expect(text).toContain('<script>');
+    expect(text).toContain('onclick');
 
     const design = await designs.read('shop');
-    const products = design.screens.find((s) => s.name === 'Products');
-    expect(products?.root.children.map((c) => c.type)).toEqual(['heading', 'search']);
-    expect(products?.root.children.every((c) => !c.layout.absolute)).toBe(true);
+    const products = design.screens.find((s) => s.name === 'Products')!;
+    expect(products.html).not.toContain('script');
+    expect(products.html).not.toContain('onclick');
+    // The words and the intent survive; only the ways of doing something go.
+    expect(products.html).toContain('Products');
+    expect(products.html).toContain('data-src="https://example.com/shop.jpg"');
   });
 
   it('never leaves two artboards on top of each other after a device change', async () => {
@@ -336,7 +324,7 @@ describe('the design tools', () => {
       diagram: 'shop',
       screen: 'Login',
       device: 'wide',
-      root: { type: 'stack', children: [{ type: 'heading', text: 'Sign in' }] },
+      html: '<main class="screen"><h1>Sign in</h1></main>',
     });
     expect(text).toContain('moved clear');
 

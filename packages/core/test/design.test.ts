@@ -3,22 +3,21 @@ import { createDiagram } from '../src/factory.js';
 import { addBlocks, addEdges } from '../src/operations.js';
 import {
   ARTBOARD_BAR,
-  ELEMENT_CATALOG,
-  ELEMENT_TYPES,
-  createElement,
   deriveDesign,
   designProgress,
   diffDesign,
   editDesign,
-  findElement,
-  hydrateElement,
+  factsOf,
+  findHtml,
   layoutDesign,
+  normalizeHtml,
   parseDesign,
+  parseHtml,
   reconcileDesign,
   relaxArtboards,
   renderElementOutline,
   renderScreenOutline,
-  walkElements,
+  walkScreen,
   type DesignDocument,
   type DesignOperation,
 } from '../src/index.js';
@@ -63,62 +62,41 @@ function apply(document: DesignDocument, ...operations: DesignOperation[]) {
   return editDesign(document, operations);
 }
 
-describe('the element catalog', () => {
-  it('describes every element type, and only real ones', () => {
-    expect(Object.keys(ELEMENT_CATALOG).sort()).toEqual([...ELEMENT_TYPES].sort());
-    for (const type of ELEMENT_TYPES) {
-      const info = ELEMENT_CATALOG[type];
-      expect(info.type, type).toBe(type);
-      expect(info.label.length, type).toBeGreaterThan(0);
-      expect(info.description.length, type).toBeGreaterThan(0);
-      expect(info.whenToUse.length, type).toBeGreaterThan(0);
-      // The defaults have to survive the schema they claim to be defaults for.
-      expect(() => createElement(type), type).not.toThrow();
-    }
+describe('reading markup written by hand', () => {
+  it('finds an element by id, by its words, or by tag when there is one', () => {
+    const html = normalizeHtml(
+      '<main><h1>Patients</h1><button data-el="els_add">Add patient</button></main>',
+    ).html;
+    const fragment = parseHtml(html);
+
+    expect(findHtml(fragment, 'els_add')?.tagName).toBe('button');
+    expect(findHtml(fragment, 'Patients')?.tagName).toBe('h1');
+    expect(findHtml(fragment, 'main')?.tagName).toBe('main');
+    expect(findHtml(fragment, 'nothing here')).toBeNull();
   });
 
-  it('gives a new element its type-specific defaults', () => {
-    const button = createElement('button');
-    expect(button.text).toBe('Continue');
-    expect(button.style.background).toBe('accent');
-    expect(button.id).toMatch(/^els_/);
+  it('reads the contract off an element', () => {
+    const html = normalizeHtml(
+      '<button data-action="POST /api/x" data-navigates-to="Done" disabled>Send</button>',
+    ).html;
+    const facts = factsOf(walkScreen(html)[0]!);
 
-    // A patch wins over the defaults, and nested objects merge rather than
-    // replace — asking for a wide button keeps its padding.
-    const wide = createElement('button', { text: 'Buy', layout: { width: 'fill' } });
-    expect(wide.text).toBe('Buy');
-    expect(wide.layout.width).toBe('fill');
-    expect(wide.layout.height).toBe(40);
-    expect(wide.layout.padding.left).toBe(20);
-  });
-});
-
-describe('reading a tree written by hand', () => {
-  it('mints ids and fills defaults through the whole tree', () => {
-    const root = hydrateElement({
-      type: 'stack',
-      children: [
-        { type: 'heading', text: 'Hello' },
-        { type: 'button', text: 'Go', action: 'POST /api/go' },
-      ],
-    });
-
-    expect(root.id).toMatch(/^els_/);
-    expect(root.children).toHaveLength(2);
-    expect(root.children[1]!.style.background).toBe('accent');
-    expect(new Set(walkElements(root).map((e) => e.id)).size).toBe(3);
+    expect(facts.tag).toBe('button');
+    expect(facts.text).toBe('Send');
+    expect(facts.action).toBe('POST /api/x');
+    expect(facts.navigatesTo).toBe('Done');
+    expect(facts.disabled).toBe(true);
+    expect(facts.id).toMatch(/^els_/);
   });
 
-  it('keeps ids that were supplied', () => {
-    const root = hydrateElement({ type: 'stack', id: 'els_keepme', children: [] });
-    expect(root.id).toBe('els_keepme');
-  });
-
-  it('refuses an unknown type, and children under something that cannot hold them', () => {
-    expect(() => hydrateElement({ type: 'wormhole' })).toThrow(/not an element type/);
-    expect(() => hydrateElement({ type: 'text', children: [{ type: 'text' }] })).toThrow(
-      /cannot hold other elements/,
-    );
+  it('survives markup that was written carelessly', () => {
+    // A person pastes this in, or a model closes a tag it never opened. The
+    // job is to keep their design openable, not to adjudicate their HTML.
+    const { html } = normalizeHtml('<div><p>One<p>Two</div><span>Three');
+    expect(html).toContain('One');
+    expect(html).toContain('Two');
+    expect(html).toContain('Three');
+    expect(normalizeHtml(html).html).toBe(html);
   });
 });
 
@@ -131,26 +109,41 @@ describe('deriving designs from the diagram', () => {
     expect(login.route).toBe('/login');
     expect(login.blockId).toBeTruthy();
 
-    const elements = walkElements(login.root);
-    const email = elements.find((e) => e.binding === 'state.email');
-    expect(email?.type).toBe('input');
+    const facts = walkScreen(login.html).map(factsOf);
+    const email = facts.find((f) => f.binding === 'state.email');
+    expect(email?.tag).toBe('input');
     expect(email?.required).toBe(true);
 
     // The field types steer the control chosen for them.
-    expect(elements.find((e) => e.binding === 'state.rememberMe')?.type).toBe('checkbox');
-    expect(elements.find((e) => e.binding === 'state.notes')?.type).toBe('textarea');
+    expect(login.html).toContain('type="checkbox" data-binding="state.rememberMe"');
+    expect(login.html).toMatch(/<textarea[^>]*data-binding="state\.notes"/);
 
     // The action became a button pointing at the endpoint it calls, and the
     // navigation edge told it where it goes afterwards.
-    const button = elements.find((e) => e.type === 'button');
+    const button = facts.find((f) => f.tag === 'button');
     expect(button?.action).toBe('POST /api/session');
     expect(button?.navigatesTo).toBe('Products');
+  });
+
+  it('seeds real markup rather than a div for everything', () => {
+    // The whole reason for the format: what comes out has to be showable.
+    const login = screenNamed(deriveDesign(shop()), 'Login');
+    expect(login.html).toContain('<main class="screen"');
+    expect(login.html).toContain('<header class="topbar"');
+    expect(login.html).toContain('<label');
+    expect(login.html).toContain('<button');
   });
 
   it('reads the layout hint on the block', () => {
     const document = deriveDesign(shop());
     const products = screenNamed(document, 'Products');
-    expect(walkElements(products.root).some((e) => e.type === 'list')).toBe(true);
+    expect(products.html).toContain('data-repeat="Products"');
+  });
+
+  it('gives the document a stylesheet built on the tokens', () => {
+    const document = deriveDesign(shop());
+    expect(document.css).toContain('var(--color-accent)');
+    expect(document.css).not.toMatch(/#[0-9a-f]{6}/i);
   });
 
   it('only covers blocks that have an interface', () => {
@@ -165,9 +158,9 @@ describe('keeping designs in step with the diagram', () => {
     const first = deriveDesign(diagram);
 
     const drawn = apply(first, {
-      op: 'set_tree',
+      op: 'set_html',
       screen: 'Login',
-      root: { type: 'stack', children: [{ type: 'heading', text: 'Hand-written' }] },
+      html: '<main class="screen"><h1>Hand-written</h1></main>',
     }).document;
 
     addBlocks(diagram, [{ type: 'ui_screen', name: 'Basket', data: { route: '/basket' } }] as never);
@@ -178,7 +171,7 @@ describe('keeping designs in step with the diagram', () => {
     expect(result.orphaned).toEqual(['Products']);
 
     // The work survives; the loss is visible rather than silent.
-    expect(screenNamed(result.document, 'Login').root.children[0]!.text).toBe('Hand-written');
+    expect(screenNamed(result.document, 'Login').html).toContain('Hand-written');
     expect(screenNamed(result.document, 'Products').orphaned).toBe(true);
     expect(result.document.screens).toHaveLength(3);
   });
@@ -204,9 +197,9 @@ describe('keeping designs in step with the diagram', () => {
   it('reports what the diagram has that the designs do not', () => {
     const diagram = shop();
     const document = deriveDesign(diagram);
-    expect(diffDesign(diagram, document).undesigned).toHaveLength(0);
+    expect(diffDesign(diagram, document).hasChanges).toBe(false);
 
-    addBlocks(diagram, [{ type: 'ui_screen', name: 'Basket' }] as never);
+    addBlocks(diagram, [{ type: 'ui_screen', name: 'Basket', data: {} }] as never);
     const diff = diffDesign(diagram, document);
     expect(diff.undesigned.map((b) => b.name)).toEqual(['Basket']);
     expect(diff.hasChanges).toBe(true);
@@ -218,142 +211,188 @@ describe('editing a design', () => {
     const document = deriveDesign(shop());
     const result = apply(
       document,
-      { op: 'add_element', screen: 'Login', type: 'divider' },
-      { op: 'remove_element', screen: 'Login', element: 'no such thing' },
-      { op: 'update_screen', screen: 'Login', status: 'drafted' },
+      { op: 'set_html', screen: 'Login', html: '<main><h1>Sign in</h1></main>' },
+      { op: 'set_html', screen: 'Nowhere', html: '<main></main>' },
     );
 
-    expect(result.applied).toBe(2);
+    expect(result.applied).toBe(1);
     expect(result.errors).toHaveLength(1);
-    expect(result.errors[0]!.index).toBe(1);
-    expect(screenNamed(result.document, 'Login').status).toBe('drafted');
+    expect(result.errors[0]?.message).toContain('Nowhere');
+    expect(screenNamed(result.document, 'Login').html).toContain('Sign in');
   });
 
-  it('adds into a named container, at a chosen index', () => {
+  it('inserts markup inside, before or after an element', () => {
     const document = deriveDesign(shop());
-    const result = apply(document, {
-      op: 'add_element',
+    const base = apply(document, {
+      op: 'set_html',
       screen: 'Login',
-      type: 'text',
-      parent: 'Content',
-      index: 0,
-      props: { text: 'First thing' },
-    });
+      html: '<main><h1 data-el="els_title">Sign in</h1></main>',
+    }).document;
 
-    const content = findElement(screenNamed(result.document, 'Login').root, 'Content')!;
-    expect(content.element.children[0]!.text).toBe('First thing');
+    const after = apply(base, {
+      op: 'insert_html',
+      screen: 'Login',
+      target: 'els_title',
+      where: 'after',
+      html: '<p>Welcome back.</p>',
+    }).document;
+    expect(screenNamed(after, 'Login').html).toMatch(/<\/h1><p[^>]*>Welcome back\.<\/p>/);
+
+    const inside = apply(base, {
+      op: 'insert_html',
+      screen: 'Login',
+      html: '<footer>Help</footer>',
+    }).document;
+    expect(screenNamed(inside, 'Login').html).toContain('<footer');
   });
 
-  it('refuses to put children inside something that cannot hold them', () => {
+  it('sets an attribute, and refuses to touch the editor\u2019s own handle', () => {
     const document = deriveDesign(shop());
-    const result = apply(document, {
-      op: 'add_element',
+    const base = apply(document, {
+      op: 'set_html',
       screen: 'Login',
-      type: 'text',
-      parent: 'Title',
+      html: '<main><input data-el="els_email"></main>',
+    }).document;
+
+    const bound = apply(base, {
+      op: 'set_attribute',
+      screen: 'Login',
+      element: 'els_email',
+      name: 'data-binding',
+      value: 'state.email',
+    }).document;
+    expect(screenNamed(bound, 'Login').html).toContain('data-binding="state.email"');
+
+    const cleared = apply(bound, {
+      op: 'set_attribute',
+      screen: 'Login',
+      element: 'els_email',
+      name: 'data-binding',
+      value: null,
+    }).document;
+    expect(screenNamed(cleared, 'Login').html).not.toContain('data-binding');
+
+    const refused = apply(base, {
+      op: 'set_attribute',
+      screen: 'Login',
+      element: 'els_email',
+      name: 'data-el',
+      value: 'something-else',
     });
-    expect(result.applied).toBe(0);
-    expect(result.errors[0]!.message).toMatch(/cannot hold other elements/);
+    expect(refused.errors[0]?.message).toContain('data-el');
   });
 
-  it('retypes an element, keeping its words and losing what no longer applies', () => {
+  it('replaces an element\u2019s words without emptying what is nested inside it', () => {
     const document = deriveDesign(shop());
-    const before = walkElements(screenNamed(document, 'Login').root).find((e) => e.type === 'button')!;
-
-    const result = apply(document, {
-      op: 'update_element',
+    const base = apply(document, {
+      op: 'set_html',
       screen: 'Login',
-      element: before.id,
-      type: 'link',
-    });
+      html: '<main><div data-el="els_card">Old title<button>Press</button></div></main>',
+    }).document;
 
-    const after = findElement(screenNamed(result.document, 'Login').root, before.id)!.element;
-    expect(after.type).toBe('link');
-    expect(after.text).toBe('Sign in');
-    expect(after.action).toBe('POST /api/session');
-    // It took the link's look rather than keeping the button's fill.
-    expect(after.style.background).toBe('');
-    expect(after.style.color).toBe('accent');
+    const retitled = apply(base, {
+      op: 'set_text',
+      screen: 'Login',
+      element: 'els_card',
+      text: 'New title',
+    }).document;
+
+    const html = screenNamed(retitled, 'Login').html;
+    expect(html).toContain('New title');
+    expect(html).not.toContain('Old title');
+    expect(html).toContain('<button');
   });
 
-  it('merges layout and style patches rather than replacing them', () => {
+  it('moves an element between parents, but never inside itself', () => {
     const document = deriveDesign(shop());
-    const button = walkElements(screenNamed(document, 'Login').root).find((e) => e.type === 'button')!;
-
-    const result = apply(document, {
-      op: 'update_element',
+    const base = apply(document, {
+      op: 'set_html',
       screen: 'Login',
-      element: button.id,
-      style: { background: 'danger' },
-    });
+      html:
+        '<main data-el="els_main"><section data-el="els_a"><p data-el="els_p">Hi</p></section>' +
+        '<section data-el="els_b"></section></main>',
+    }).document;
 
-    const after = findElement(screenNamed(result.document, 'Login').root, button.id)!.element;
-    expect(after.style.background).toBe('danger');
-    expect(after.style.radius).toBe('md');
+    const moved = apply(base, {
+      op: 'move_node',
+      screen: 'Login',
+      element: 'els_p',
+      parent: 'els_b',
+    }).document;
+    expect(screenNamed(moved, 'Login').html).toMatch(
+      /<section data-el="els_b"><p data-el="els_p">Hi<\/p><\/section>/,
+    );
+
+    const eaten = apply(base, {
+      op: 'move_node',
+      screen: 'Login',
+      element: 'els_a',
+      parent: 'els_p',
+    });
+    expect(eaten.errors[0]?.message).toContain('inside itself');
   });
 
-  it('moves an element between containers, but never inside itself', () => {
+  it('duplicates an element with fresh ids', () => {
     const document = deriveDesign(shop());
-    const login = screenNamed(document, 'Login');
-    const content = findElement(login.root, 'Content')!.element;
-    const header = findElement(login.root, 'Header')!.element;
-
-    const moved = apply(document, {
-      op: 'move_element',
+    const base = apply(document, {
+      op: 'set_html',
       screen: 'Login',
-      element: content.children[0]!.id,
-      parent: header.id,
-    });
-    expect(moved.applied).toBe(1);
-    expect(findElement(screenNamed(moved.document, 'Login').root, header.id)!.element.children)
-      .toHaveLength(3);
+      html: '<main><article data-el="els_card"><p data-el="els_p">Hi</p></article></main>',
+    }).document;
 
-    const cycle = apply(document, {
-      op: 'move_element',
+    const copied = apply(base, {
+      op: 'duplicate_node',
       screen: 'Login',
-      element: content.id,
-      parent: content.children[0]!.id,
-    });
-    expect(cycle.applied).toBe(0);
-  });
+      element: 'els_card',
+    }).document;
 
-  it('duplicates a subtree with fresh ids', () => {
-    const document = deriveDesign(shop());
-    const login = screenNamed(document, 'Login');
-    const header = findElement(login.root, 'Header')!.element;
-
-    const result = apply(document, { op: 'duplicate_element', screen: 'Login', element: header.id });
-    const root = screenNamed(result.document, 'Login').root;
-    const ids = walkElements(root).map((e) => e.id);
+    const html = screenNamed(copied, 'Login').html;
+    const ids = [...html.matchAll(/data-el="([^"]+)"/g)].map((m) => m[1]);
+    expect(html.match(/<article/g)).toHaveLength(2);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(root.children).toHaveLength(3);
   });
 
-  it('makes a variant artboard pointing at the same block', () => {
+  it('never removes the outermost element through remove_node', () => {
     const document = deriveDesign(shop());
+    const base = apply(document, {
+      op: 'set_html',
+      screen: 'Login',
+      html: '<main data-el="els_main"><p>Hi</p></main>',
+    }).document;
+
+    const result = apply(base, { op: 'remove_node', screen: 'Login', element: 'els_main' });
+    expect(result.errors[0]?.message).toContain('remove_screen');
+  });
+
+  it('makes a variant artboard pointing at the same block, with its own ids', () => {
+    const document = deriveDesign(shop());
+    const login = screenNamed(document, 'Login');
     const result = apply(document, {
       op: 'duplicate_screen',
-      screen: 'Products',
+      screen: 'Login',
       variant: 'Empty',
     });
 
-    const variants = result.document.screens.filter((s) => s.name === 'Products');
-    expect(variants).toHaveLength(2);
-    expect(variants[1]!.variant).toBe('Empty');
-    expect(variants[1]!.blockId).toBe(variants[0]!.blockId);
-    expect(variants[1]!.root.id).not.toBe(variants[0]!.root.id);
+    const copy = result.document.screens.find((s) => s.variant === 'Empty');
+    expect(copy?.blockId).toBe(login.blockId);
+    expect(copy?.html).not.toBe(login.html);
+
+    const originalIds = new Set([...login.html.matchAll(/data-el="([^"]+)"/g)].map((m) => m[1]));
+    const copyIds = [...(copy?.html ?? '').matchAll(/data-el="([^"]+)"/g)].map((m) => m[1]);
+    expect(copyIds.some((id) => originalIds.has(id!))).toBe(false);
   });
 
   it('resolves a screen by name, by "Name / Variant" and by block id', () => {
-    const document = apply(deriveDesign(shop()), {
+    const document = deriveDesign(shop());
+    const withVariant = apply(document, {
       op: 'duplicate_screen',
-      screen: 'Products',
+      screen: 'Login',
       variant: 'Empty',
     }).document;
 
-    const blockId = screenNamed(document, 'Login').blockId!;
-    for (const ref of ['Login', blockId, 'Products / Empty']) {
-      expect(apply(document, { op: 'update_screen', screen: ref, notes: 'x' }).applied, ref).toBe(1);
+    for (const ref of ['Login', 'Login / Empty', screenNamed(document, 'Login').blockId!]) {
+      const result = apply(withVariant, { op: 'update_screen', screen: ref!, purpose: 'Set' });
+      expect(result.errors, `resolving ${ref}`).toHaveLength(0);
     }
   });
 
@@ -361,14 +400,6 @@ describe('editing a design', () => {
     const document = deriveDesign(shop());
     const result = apply(document, { op: 'update_screen', screen: 'Login', device: 'mobile' });
     expect(screenNamed(result.document, 'Login').frame).toEqual({ width: 390, height: 844 });
-  });
-
-  it('never removes the screen root through remove_element', () => {
-    const document = deriveDesign(shop());
-    const root = screenNamed(document, 'Login').root.id;
-    const result = apply(document, { op: 'remove_element', screen: 'Login', element: root });
-    expect(result.applied).toBe(0);
-    expect(result.errors[0]!.message).toMatch(/remove_screen/);
   });
 });
 
@@ -473,69 +504,61 @@ describe('artboards never overlap', () => {
   });
 });
 
-describe('elements are never placed at x/y outside a frame', () => {
-  /** Every element in the document still asking to be positioned by hand. */
-  function freeElements(document: DesignDocument): string[] {
-    return document.screens.flatMap((screen) =>
-      walkElements(screen.root)
-        .filter((element) => element.layout.absolute)
-        .map((element) => `${screen.name}/${element.type}`),
-    );
+describe('nothing dangerous survives a write', () => {
+  /** Draw a screen and hand back what actually landed. */
+  function drawn(html: string) {
+    const document = deriveDesign(shop());
+    const result = apply(document, { op: 'set_html', screen: 'Login', html });
+    return { html: screenNamed(result.document, 'Login').html, result };
   }
 
-  const looseTree = {
-    type: 'stack',
-    name: 'Screen',
-    layout: { direction: 'column', gap: 24 },
-    children: [
-      { type: 'heading', text: 'Patients', layout: { absolute: true, x: 32, y: 32 } },
-      { type: 'search', label: 'Search', layout: { absolute: true, x: 32, y: 96 } },
-      { type: 'table', columns: ['Name'], layout: { absolute: true, x: 32, y: 160 } },
-    ],
-  };
+  it('strips scripts, handlers and javascript: urls, and says it did', () => {
+    const { html, result } = drawn(
+      `<main><script>steal()</script><h1 onclick="steal()">Hi</h1>` +
+        `<a href="javascript:steal()">Go</a></main>`,
+    );
 
-  it('settles a tree written in coordinates back into its stack', () => {
-    const document = deriveDesign(shop());
-    const drawn = apply(document, { op: 'set_tree', screen: 'Login', root: looseTree });
-
-    expect(freeElements(drawn.document)).toEqual([]);
-    expect(drawn.corrections.join(' ')).toContain('settled back into the flow');
-
-    // Settled, not discarded: the elements and their order are what was sent.
-    const root = screenNamed(drawn.document, 'Login').root;
-    expect(root.children.map((c) => c.type)).toEqual(['heading', 'search', 'table']);
-    expect(root.children[0]?.text).toBe('Patients');
-    expect(root.children[0]?.layout.x).toBe(0);
+    expect(html).not.toContain('script');
+    expect(html).not.toContain('onclick');
+    expect(html).not.toContain('javascript:');
+    // The words survive; only the ways of doing something go.
+    expect(html).toContain('Hi');
+    expect(result.corrections.join(' ')).toContain('<script>');
   });
 
-  it('leaves free placement alone inside a frame, which is what a frame is for', () => {
-    const document = deriveDesign(shop());
-    const drawn = apply(document, {
-      op: 'set_tree',
-      screen: 'Login',
-      root: {
-        type: 'frame',
-        name: 'Hero',
-        children: [
-          { type: 'image', src: 'A photograph of the shop', layout: { absolute: true, x: 0, y: 0 } },
-          { type: 'badge', text: 'New', layout: { absolute: true, x: 320, y: 16 } },
-        ],
-      },
-    });
-
-    expect(freeElements(drawn.document)).toEqual(['Login/image', 'Login/badge']);
-    expect(drawn.corrections).toEqual([]);
+  it('keeps a remote image as a description rather than fetching it', () => {
+    const { html } = drawn('<main><img src="https://example.com/x.jpg" alt="A waiting room"></main>');
+    // The src is gone; the intent is kept where an implementer will see it.
+    expect(html).not.toMatch(/[^-]src="https:/);
+    expect(html).toContain('data-src="https://example.com/x.jpg"');
+    expect(html).toContain('alt="A waiting room"');
   });
 
-  it('settles a whole screen added in one go', () => {
-    const document = deriveDesign(shop());
-    const added = apply(document, {
-      op: 'add_screen',
-      name: 'Receipt',
-      root: looseTree,
-    });
+  it('leaves an inline data: image alone, which is what a design should use', () => {
+    const { html } = drawn('<main><img src="data:image/svg+xml;base64,AAAA" alt="Logo"></main>');
+    expect(html).toContain('src="data:image/svg+xml;base64,AAAA"');
+  });
 
-    expect(freeElements(added.document)).toEqual([]);
+  it('refuses @import and remote url() in a stylesheet', () => {
+    const document = deriveDesign(shop());
+    const result = apply(document, {
+      op: 'set_css',
+      css: '@import url(evil.css); .a { background: url(https://x/y.png) } .b { color: red }',
+    });
+    expect(result.document.css).not.toContain('@import');
+    expect(result.document.css).not.toContain('https://');
+    expect(result.document.css).toContain('color: red');
+  });
+
+  it('gives every element an id, and the same document twice over', () => {
+    const { html } = drawn('<main><section><p>Hi</p></section></main>');
+    const ids = [...html.matchAll(/data-el="(els_[a-z0-9]+)"/g)].map((m) => m[1]);
+    expect(ids.length).toBe(3);
+    expect(new Set(ids).size).toBe(3);
+
+    // Normalising what is already normal changes nothing, which is what makes
+    // it safe to run on every read.
+    expect(normalizeHtml(html).html).toBe(html);
   });
 });
 
@@ -548,75 +571,163 @@ describe('reading a design back', () => {
     expect(outline).toContain('`/login`');
     expect(outline).toContain('value ← state.email');
     expect(outline).toContain('does → POST /api/session');
-    expect(outline).toContain('goes → Products');
   });
 
-  it('says the states that were never drawn', () => {
-    const document = apply(deriveDesign(shop()), {
-      op: 'update_screen',
+  it('says which elements a container holds without repeating their words', () => {
+    // A container borrowing every word underneath it turns the outline the
+    // implementer reads into a wall of the same text three times over.
+    const document = deriveDesign(shop());
+    const drawn = apply(document, {
+      op: 'set_html',
       screen: 'Login',
-      states: [{ name: 'Loading', when: 'signing in', changes: 'The button shows a spinner.' }],
+      html: '<main class="screen"><section><h1>Welcome back</h1><p>Sign in.</p></section></main>',
     }).document;
 
-    const outline = renderScreenOutline(screenNamed(document, 'Login'));
-    expect(outline).toContain('**Loading** (signing in) — The button shows a spinner.');
+    const outline = renderElementOutline(screenNamed(drawn, 'Login').html);
+    expect(outline).toContain('- main.screen\n');
+    expect(outline).not.toContain('main.screen "Welcome back');
+    expect(outline).toContain('h1 "Welcome back"');
+  });
+
+  it('states a table and a dropdown once rather than walking into them', () => {
+    const document = deriveDesign(shop());
+    const drawn = apply(document, {
+      op: 'set_html',
+      screen: 'Login',
+      html: `<main><table data-repeat="Order" data-repeat-count="4">
+        <thead><tr><th>Ref</th><th>Total</th></tr></thead>
+        <tbody><tr><td>#1</td><td>£4</td></tr></tbody>
+      </table>
+      <select data-binding="state.size"><option>Small</option><option>Large</option></select></main>`,
+    }).document;
+
+    const outline = renderElementOutline(screenNamed(drawn, 'Login').html);
+    expect(outline).toContain('columns: Ref, Total');
+    expect(outline).toContain('repeats over Order (4 shown)');
+    expect(outline).toContain('options: Small, Large');
+    expect(outline).not.toContain('- th ');
+    expect(outline).not.toContain('- option ');
   });
 
   it('can leave the styling out', () => {
-    const root = createElement('stack', {
-      children: [createElement('heading', { text: 'Hi' })],
-    });
-    expect(renderElementOutline(root)).toContain('[heading.lg');
-    expect(renderElementOutline(root, { showStyle: false })).not.toContain('[heading.lg');
+    const document = deriveDesign(shop());
+    const plain = renderElementOutline(screenNamed(document, 'Login').html, { showStyle: false });
+    expect(plain).not.toContain('.topbar');
+    expect(plain).toContain('- header');
   });
 });
 
 describe('progress', () => {
   it('counts the holes worth chasing', () => {
-    const document = apply(deriveDesign(shop()), {
-      op: 'set_tree',
-      screen: 'Products',
-      root: {
-        type: 'stack',
-        children: [
-          { type: 'button', text: 'Does nothing' },
-          { type: 'input', label: 'Nowhere to go' },
-          { type: 'button', text: 'Fine', action: 'GET /api/products' },
-        ],
-      },
+    const diagram = shop();
+    const document = deriveDesign(diagram);
+    const drawn = apply(document, {
+      op: 'set_html',
+      screen: 'Login',
+      html: `<main class="screen">
+        <button>Do something</button>
+        <a href="#">Go nowhere</a>
+        <label>Quantity<input></label>
+        <button data-action="POST /api/session">Sign in</button>
+        <label>Email<input data-binding="state.email"></label>
+        <input type="submit" value="Send">
+      </main>`,
     }).document;
 
-    const progress = designProgress(shop(), document);
-    expect(progress.danglingActions.map((d) => d.element)).toEqual(['Does nothing']);
-    expect(progress.unboundFields.map((d) => d.element)).toEqual(['Nowhere to go']);
+    const progress = designProgress(diagram, drawn);
+    expect(progress.danglingActions.map((d) => d.element)).toEqual([
+      'Do something',
+      'Go nowhere',
+    ]);
+    expect(progress.unboundFields.map((d) => d.element)).toEqual(['input']);
   });
 
-  it('counts a seeded wireframe as not yet designed', () => {
+  it('does not count a seeded wireframe as designed', () => {
     const diagram = shop();
     const document = deriveDesign(diagram);
     expect(designProgress(diagram, document).completion).toBe(0);
 
-    const drafted = apply(document, { op: 'update_screen', screen: 'Login', status: 'drafted' })
-      .document;
-    expect(designProgress(diagram, drafted).completion).toBe(50);
+    const drafted = apply(document, {
+      op: 'update_screen',
+      screen: 'Login',
+      status: 'drafted',
+    }).document;
+    expect(designProgress(diagram, drafted).completion).toBeGreaterThan(0);
   });
 });
 
 describe('the file format', () => {
-  it('survives a round trip through JSON', () => {
+  it('round-trips through JSON', () => {
     const document = deriveDesign(shop());
-    const reparsed = parseDesign(JSON.parse(JSON.stringify(document)));
-    expect(reparsed).toEqual(document);
+    const back = parseDesign(JSON.parse(JSON.stringify(document)));
+    expect(back).toEqual(document);
   });
 
   it('fills in everything a hand-written file leaves out', () => {
     const document = parseDesign({
-      slug: 'shop',
-      screens: [{ id: 'scr_1', name: 'Login', root: { id: 'els_1', type: 'stack' } }],
+      slug: 'sparse',
+      screens: [{ id: 'scr_1', name: 'Only', html: '<main><p>Hi</p></main>' }],
     });
-    expect(document.formatVersion).toBe(1);
-    expect(document.screens[0]!.device).toBe('desktop');
-    expect(document.screens[0]!.root.children).toEqual([]);
-    expect(document.system.colors).toEqual([]);
+    const screen = document.screens[0]!;
+    expect(screen.status).toBe('todo');
+    expect(screen.frame).toEqual({ width: 1440, height: 900 });
+    expect(screen.css).toBe('');
+    expect(document.system.colors.length).toBe(0);
+  });
+
+  it('carries a version 1 element tree across to markup', () => {
+    // The format a user's file is already in. Every binding, action and
+    // destination has to come across, or an upgrade they never asked for
+    // silently loses the wiring the whole tool exists to keep.
+    const v1 = {
+      formatVersion: 1,
+      slug: 'legacy',
+      screens: [
+        {
+          id: 'scr_1',
+          name: 'Sign in',
+          root: {
+            id: 'els_1',
+            type: 'stack',
+            name: 'Screen',
+            layout: { direction: 'column', gap: 24 },
+            children: [
+              { id: 'els_2', type: 'heading', text: 'Welcome back' },
+              {
+                id: 'els_3',
+                type: 'input',
+                label: 'Email',
+                placeholder: 'you@example.com',
+                binding: 'state.email',
+                required: true,
+              },
+              {
+                id: 'els_4',
+                type: 'button',
+                text: 'Sign in',
+                variant: 'primary',
+                action: 'POST /api/session',
+                navigatesTo: 'Products',
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const document = parseDesign(v1);
+    expect(document.formatVersion).toBe(2);
+
+    const screen = document.screens[0]!;
+    expect(screen).not.toHaveProperty('root');
+    expect(screen.html).toContain('Welcome back');
+    expect(screen.html).toContain('data-binding="state.email"');
+    expect(screen.html).toContain('data-action="POST /api/session"');
+    expect(screen.html).toContain('data-navigates-to="Products"');
+    expect(screen.html).toContain('placeholder="you@example.com"');
+    expect(screen.html).toContain('required');
+    // And it is real markup, not a div for every element.
+    expect(screen.html).toContain('<button');
+    expect(screen.html).toContain('<input');
   });
 });

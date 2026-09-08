@@ -107,7 +107,7 @@ describe('the design routes', () => {
     expect(await exists(designFile('shop'))).toBe(true);
 
     const login = body.design.screens.find((s) => s.name === 'Login')!;
-    const flat = JSON.stringify(login.root);
+    const flat = login.html;
     expect(flat).toContain('state.email');
     expect(flat).toContain('POST /api/session');
   });
@@ -115,7 +115,7 @@ describe('the design routes', () => {
   it('applies operations and reports the ones that fail', async () => {
     const { body } = await call<DesignBody>('POST', '/api/diagrams/shop/design/ops', {
       operations: [
-        { op: 'add_element', screen: 'Products', type: 'search', props: { placeholder: 'Search' } },
+        { op: 'insert_html', screen: 'Products', html: '<input type="search" placeholder="Search">' },
         { op: 'remove_element', screen: 'Products', element: 'nothing called this' },
       ],
     });
@@ -153,9 +153,9 @@ describe('the design routes', () => {
     await call('POST', '/api/diagrams/shop/design/ops', {
       operations: [
         {
-          op: 'set_tree',
+          op: 'set_html',
           screen: 'Login',
-          root: { type: 'stack', children: [{ type: 'heading', text: 'Hand-written' }] },
+          html: '<main class="screen"><h1>Hand-written</h1></main>',
         },
       ],
     });
@@ -172,7 +172,7 @@ describe('the design routes', () => {
     expect(body.report?.orphaned).toEqual(['Products']);
 
     const login = body.design.screens.find((s) => s.name === 'Login')!;
-    expect(login.root.children[0]!.text).toBe('Hand-written');
+    expect(login.html).toContain('Hand-written');
   });
 
   it('folds the designs into the implementation spec', async () => {
@@ -190,8 +190,8 @@ describe('the design routes', () => {
       includePinned: true,
     });
     expect(body.design.screens.map((s) => s.name)).toEqual(before.screens.map((s) => s.name));
-    expect(JSON.stringify(body.design.screens.map((s) => s.root))).toBe(
-      JSON.stringify(before.screens.map((s) => s.root)),
+    expect(JSON.stringify(body.design.screens.map((s) => s.html))).toBe(
+      JSON.stringify(before.screens.map((s) => s.html)),
     );
   });
 

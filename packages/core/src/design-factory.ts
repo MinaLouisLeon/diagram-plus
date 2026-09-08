@@ -13,6 +13,7 @@ import {
   type ElementType,
   type ScreenDesign,
 } from './design.js';
+import { normalizeHtml } from './design-html.js';
 import { newId, nowIso } from './ids.js';
 
 /**
@@ -152,23 +153,15 @@ export interface CreateScreenInput {
   frame?: { width: number; height: number };
   position?: { x: number; y: number };
   background?: string;
-  root?: DesignElement;
+  html?: string;
+  css?: string;
   order?: number;
   notes?: string;
 }
 
 /** The empty page a new screen starts as: a padded column, ready to fill. */
-export function emptyScreenRoot(): DesignElement {
-  return createElement('stack', {
-    name: 'Screen',
-    layout: {
-      direction: 'column',
-      gap: 24,
-      padding: { top: 32, right: 32, bottom: 32, left: 32 },
-      width: 'fill',
-      height: 'fill',
-    },
-  });
+export function emptyScreenHtml(): string {
+  return '<main class="screen"></main>';
 }
 
 export function createScreen(input: CreateScreenInput): ScreenDesign {
@@ -185,7 +178,8 @@ export function createScreen(input: CreateScreenInput): ScreenDesign {
     frame: input.frame ?? { width: preset.width, height: preset.height },
     position: input.position ?? { x: 0, y: 0 },
     background: input.background ?? 'background',
-    root: input.root ?? emptyScreenRoot(),
+    html: normalizeHtml(input.html ?? emptyScreenHtml()).html,
+    css: input.css ?? '',
     order: input.order ?? 0,
     notes: input.notes ?? '',
     updatedAt: nowIso(),
@@ -201,6 +195,7 @@ export interface CreateDesignInput {
   name?: string;
   diagramId?: string;
   system?: Partial<DesignSystem>;
+  css?: string;
   screens?: ScreenDesign[];
 }
 
@@ -213,11 +208,128 @@ export function createDesignDocument(input: CreateDesignInput): DesignDocument {
     name: input.name ?? '',
     revision: 0,
     system: { ...DEFAULT_DESIGN_SYSTEM, ...(input.system ?? {}) },
+    css: input.css ?? DEFAULT_DESIGN_CSS,
     screens: input.screens ?? [],
     createdAt: now,
     updatedAt: now,
   });
 }
+
+/* ------------------------------------------------------------------ *
+ * Tokens, as CSS
+ * ------------------------------------------------------------------ */
+
+/**
+ * A token name as a CSS custom-property suffix.
+ *
+ * `heading.lg` cannot be one — a dot is not valid in an identifier — so it
+ * becomes `heading-lg`. The names are the contract between a screen and the
+ * tokens panel, so this has to be the only place the translation happens.
+ */
+export function tokenSlug(name: string): string {
+  return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+/**
+ * The design system as the stylesheet every screen is drawn against.
+ *
+ * This is the bridge that keeps the tokens worth having. A screen says
+ * `var(--color-accent)` and `class="text-heading-lg"`; changing what those mean
+ * in the panel restyles twenty screens at once, exactly as it did when elements
+ * pointed at token names in a typed tree.
+ *
+ * Typography comes out as classes rather than variables because a type token is
+ * five properties — size, weight, line height, tracking, casing — and no CSS
+ * variable holds five properties usefully.
+ */
+export function systemToCss(system: DesignSystem): string {
+  const lines: string[] = [':root {'];
+
+  for (const color of system.colors) {
+    lines.push(`  --color-${tokenSlug(color.name)}: ${color.value};`);
+    if (color.on) lines.push(`  --on-${tokenSlug(color.name)}: ${color.on};`);
+  }
+  lines.push(`  --space: ${system.spacingBase}px;`);
+  for (const radius of system.radii) lines.push(`  --radius-${tokenSlug(radius.name)}: ${radius.value};`);
+  for (const shadow of system.shadows) lines.push(`  --shadow-${tokenSlug(shadow.name)}: ${shadow.value};`);
+  lines.push('}', '');
+
+  for (const type of system.typography) {
+    const parts = [
+      `font-size: ${type.size}px;`,
+      `font-weight: ${type.weight};`,
+      `line-height: ${type.lineHeight};`,
+    ];
+    if (type.family) parts.push(`font-family: ${type.family};`);
+    if (type.letterSpacing) parts.push(`letter-spacing: ${type.letterSpacing}px;`);
+    if (type.transform !== 'none') parts.push(`text-transform: ${type.transform};`);
+    lines.push(`.text-${tokenSlug(type.name)} { ${parts.join(' ')} }`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * The stylesheet a new design starts with.
+ *
+ * A reset plus enough opinion that plain semantic markup already looks like a
+ * product: a `<button>` looks like a button, a `<table>` looks like a table, a
+ * `<label>` sits above its field. That is the whole point of the move to HTML —
+ * the model writes `<button class="primary">Add patient</button>` and it comes
+ * out looking deliberate without a stylesheet per screen.
+ *
+ * It is meant to be edited. Everything here is written against the tokens, so
+ * changing the accent in the panel changes every button.
+ */
+export const DEFAULT_DESIGN_CSS = `
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px; line-height: 1.55;
+  color: var(--color-text); background: var(--color-background);
+}
+h1, h2, h3, h4, p, figure { margin: 0; }
+
+.screen { display: flex; flex-direction: column; gap: calc(var(--space) * 3); padding: calc(var(--space) * 4); min-height: 100%; }
+.row { display: flex; align-items: center; gap: calc(var(--space) * 2); }
+.col { display: flex; flex-direction: column; gap: calc(var(--space) * 2); }
+.grow { flex: 1; }
+.muted { color: var(--color-subtle); }
+
+header.topbar { display: flex; align-items: center; gap: calc(var(--space) * 2); padding-bottom: calc(var(--space) * 2); border-bottom: 1px solid var(--color-border); }
+aside.sidebar { width: 240px; flex: none; display: flex; flex-direction: column; gap: var(--space); padding: calc(var(--space) * 3); background: var(--color-surface); border-right: 1px solid var(--color-border); }
+nav { display: flex; gap: calc(var(--space) * 2); }
+nav a { color: var(--color-subtle); text-decoration: none; padding: calc(var(--space) * 0.75) var(--space); border-radius: var(--radius-md); }
+nav a[aria-current] { color: var(--color-text); background: var(--color-muted); font-weight: 600; }
+
+.card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: calc(var(--space) * 2); box-shadow: var(--shadow-sm); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: calc(var(--space) * 2); }
+
+button, .btn { font: inherit; font-weight: 600; padding: calc(var(--space) * 1.25) calc(var(--space) * 2); border-radius: var(--radius-md); border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); cursor: default; }
+button.primary, .btn.primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--on-accent); }
+button.danger, .btn.danger { background: var(--color-danger); border-color: var(--color-danger); color: var(--on-danger); }
+button.ghost, .btn.ghost { background: transparent; border-color: transparent; color: var(--color-accent); }
+button[disabled] { opacity: 0.5; }
+
+label { display: flex; flex-direction: column; gap: calc(var(--space) * 0.75); font-size: 12px; font-weight: 500; color: var(--color-subtle); }
+input, select, textarea { font: inherit; color: var(--color-text); padding: calc(var(--space) * 1.25) calc(var(--space) * 1.5); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); width: 100%; }
+input[type="checkbox"], input[type="radio"] { width: auto; }
+small { font-size: 12px; color: var(--color-subtle); }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; font-size: 12px; font-weight: 600; color: var(--color-subtle); padding: var(--space) calc(var(--space) * 1.5); border-bottom: 1px solid var(--color-border); }
+td { padding: calc(var(--space) * 1.5); border-bottom: 1px solid var(--color-border); }
+
+.badge { display: inline-flex; align-items: center; padding: 2px calc(var(--space)); border-radius: var(--radius-full); background: var(--color-muted); color: var(--on-muted); font-size: 12px; font-weight: 500; }
+.badge.success { background: var(--color-success); color: var(--on-success); }
+.badge.warning { background: var(--color-warning); color: var(--on-warning); }
+.avatar { width: 40px; height: 40px; border-radius: var(--radius-full); background: var(--color-muted); flex: none; }
+hr { border: 0; border-top: 1px solid var(--color-border); margin: 0; }
+
+/* An image whose source was a URL: described, never fetched. */
+img:not([src]) { display: block; min-height: 120px; border-radius: var(--radius-md); background: linear-gradient(135deg, var(--color-muted), var(--color-border)); }
+`.trim();
 
 /** Artboard spacing on the design canvas — one gutter, used everywhere. */
 export const ARTBOARD_GAP = 120;

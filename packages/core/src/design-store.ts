@@ -1,6 +1,7 @@
 import type { Diagram } from './diagram.js';
 import { createDesignDocument } from './design-factory.js';
-import { relaxArtboards, settleFreePlacement } from './design-ops.js';
+import { normalizeHtml } from './design-html.js';
+import { relaxArtboards } from './design-ops.js';
 import { deriveDesign, reconcileDesign } from './design-sync.js';
 import {
   DesignDocumentSchema,
@@ -33,22 +34,25 @@ import {
 /**
  * Put a document read off disk back inside its own rules.
  *
- * Everything written from here on holds the two invariants — no element placed
- * at x/y outside a frame, no two artboards on top of each other — but files
- * already on disk were written before they existed, and somebody may have
- * hand-edited the JSON. Repairing on the way in means the editor, the spec and
- * the MCP tools all see a document that is true, rather than each having to
- * remember to work around one that is not.
+ * Everything written from here on is sanitised and identified on the way in,
+ * and no two artboards are left on top of each other. But a file already on
+ * disk may predate those rules, may have been migrated from the typed-tree
+ * format, or may have been hand-edited — so the same treatment is applied on
+ * the way in, and the editor, the spec and the MCP tools all see a document
+ * that is true rather than each working around one that is not.
+ *
+ * Elements *within* a screen can no longer overlap by accident: the browser
+ * lays them out. That whole class of repair went away with the format.
  *
  * Nothing is written here. The next real edit persists the repair.
  */
 function repairDesign(document: DesignDocument): DesignDocument {
   let changed = false;
   const screens = document.screens.map((screen) => {
-    const { root, settled } = settleFreePlacement(screen.root);
-    if (!settled.length) return screen;
+    const { html, removed, minted } = normalizeHtml(screen.html);
+    if (!removed.length && !minted) return screen;
     changed = true;
-    return { ...screen, root };
+    return { ...screen, html };
   });
 
   const relaxed = relaxArtboards(changed ? screens : document.screens);

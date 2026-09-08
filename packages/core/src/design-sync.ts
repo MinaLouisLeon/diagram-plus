@@ -1,17 +1,17 @@
 import type { Block, BlockOf, BlockType } from './blocks.js';
 import type { Field } from './common.js';
 import type { Diagram } from './diagram.js';
+import { getAttr } from './design-html.js';
 import {
   createDesignDocument,
-  createElement,
   createScreen,
-  emptyScreenRoot,
+  emptyScreenHtml,
 } from './design-factory.js';
-import { layoutDesign, walkElements } from './design-ops.js';
+import { factsOf } from './design-ops.js';
+import { layoutDesign, walkScreen } from './design-ops.js';
 import {
   DEVICE_FRAMES,
   type DesignDocument,
-  type DesignElement,
   type Device,
   type ScreenDesign,
 } from './design.js';
@@ -58,46 +58,16 @@ const LONG_TEXT = /(description|notes?|message|body|comment|bio|summary|content|
 const SECRET = /(password|secret|token|pin)/i;
 const CHOICE = /(status|type|kind|category|role|state|country|currency|method)/i;
 
-/** The control a piece of screen state should be captured with. */
-function controlFor(field: Field): DesignElement {
-  const type = field.type.toLowerCase();
-  const name = field.name;
-
-  const common = {
-    name: field.name,
-    label: humanize(field.name),
-    helper: field.description,
-    binding: `state.${field.name}`,
-    required: field.required,
-    placeholder: field.example,
-  };
-
-  if (type.includes('bool')) {
-    return createElement('checkbox', { ...common, placeholder: '' });
-  }
-  if (type.includes('[]') || type.includes('array') || type.includes('list')) {
-    return createElement('select', { ...common, options: [{ label: field.example || 'Any' }] });
-  }
-  if (CHOICE.test(name) || type.includes('enum')) {
-    return createElement('select', {
-      ...common,
-      placeholder: field.example || 'Choose one',
-      options: [{ label: field.example || 'First' }, { label: 'Second' }],
-    });
-  }
-  if (LONG_TEXT.test(name)) {
-    return createElement('textarea', common);
-  }
-  if (SECRET.test(name)) {
-    return createElement('input', { ...common, variant: 'password', placeholder: '••••••••' });
-  }
-  if (type.includes('file') || type.includes('image') || type.includes('upload')) {
-    return createElement('upload', { ...common, placeholder: '' });
-  }
-  return createElement('input', common);
+/** Escape text going into markup. Everything seeded here is somebody's words. */
+function esc(value: string): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
-/** `firstName` / `first_name` → `First name`. */
+/** `firstName` / `first_name` becomes `First name`. */
 function humanize(value: string): string {
   const spaced = value
     .replace(/[_-]+/g, ' ')
@@ -105,6 +75,44 @@ function humanize(value: string): string {
     .trim();
   if (!spaced) return value;
   return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
+}
+
+/**
+ * The control a piece of screen state should be captured with.
+ *
+ * The guesswork is the same guesswork it always was — a field called
+ * `password` is a password box, one called `status` is a dropdown, one called
+ * `description` is a textarea. Only what it emits has changed.
+ */
+function controlFor(field: Field): string {
+  const type = field.type.toLowerCase();
+  const name = field.name;
+  const label = esc(humanize(name));
+  const bind = `data-binding="state.${esc(name)}"`;
+  const req = field.required ? ' required' : '';
+  const help = field.description ? `\n      <small>${esc(field.description)}</small>` : '';
+  const wrap = (control: string): string =>
+    `    <label>${label}\n      ${control}${help}\n    </label>`;
+
+  if (type.includes('bool')) return wrap(`<input type="checkbox" ${bind}${req}>`);
+  if (type.includes('[]') || type.includes('array') || type.includes('list')) {
+    return wrap(`<select ${bind}${req}><option>${esc(field.example || 'Any')}</option></select>`);
+  }
+  if (CHOICE.test(name) || type.includes('enum')) {
+    return wrap(
+      `<select ${bind}${req}><option>${esc(field.example || 'First')}</option><option>Second</option></select>`,
+    );
+  }
+  if (LONG_TEXT.test(name)) {
+    return wrap(`<textarea ${bind}${req} rows="3" placeholder="${esc(field.example)}"></textarea>`);
+  }
+  if (SECRET.test(name)) {
+    return wrap(`<input type="password" ${bind}${req} placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022">`);
+  }
+  if (type.includes('file') || type.includes('image') || type.includes('upload')) {
+    return wrap(`<input type="file" ${bind}${req}>`);
+  }
+  return wrap(`<input ${bind}${req} placeholder="${esc(field.example)}">`);
 }
 
 /** The shape the block's `layout` hint asks for, if it asks for anything. */
@@ -118,53 +126,39 @@ function shapeHint(layout: string): 'list' | 'table' | 'grid' | 'form' | 'none' 
 }
 
 /** A card standing in for a repeated record. */
-function recordCard(label: string): DesignElement {
-  return createElement('card', {
-    name: `${label} row`,
-    layout: { direction: 'row', gap: 16, align: 'center' },
-    children: [
-      createElement('avatar', { name: 'Thumbnail' }),
-      createElement('stack', {
-        name: 'Detail',
-        layout: { direction: 'column', gap: 4, grow: 1 },
-        children: [
-          createElement('text', { name: 'Title', text: label, style: { text: 'heading.sm' } }),
-          createElement('text', {
-            name: 'Meta',
-            text: 'Supporting line',
-            style: { text: 'body.sm', color: 'subtle' },
-          }),
-        ],
-      }),
-      createElement('badge', { name: 'Status', text: 'Active' }),
-    ],
-  }) as DesignElement;
+function recordCard(label: string): string {
+  return `    <article class="card row">
+      <span class="avatar"></span>
+      <div class="col grow">
+        <strong class="text-heading-sm">${esc(label)}</strong>
+        <span class="muted text-body-sm">Supporting line</span>
+      </div>
+      <span class="badge">Active</span>
+    </article>`;
 }
 
 /**
  * Read a `ui_screen` block as a starting wireframe.
  *
- * Everything drawn comes from something the block already says, and every
- * hook the block knows about is carried onto the element that owns it — an
- * action's `calls` becomes the button's action, a state field becomes a bound
+ * Everything drawn comes from something the block already says, and every hook
+ * the block knows about is carried onto the element that owns it — an action's
+ * `calls` becomes the button's `data-action`, a state field becomes a bound
  * control. Nothing is invented except the arrangement.
+ *
+ * What comes out is a real page rather than a diagram of one: semantic tags
+ * against the shared stylesheet, so even the seeded version is something the
+ * user could put in front of somebody without apologising for it first.
  */
-export function seedScreenRoot(block: Block, diagram: Diagram): DesignElement {
-  if (block.type === 'ui_component') return seedComponentRoot(block as BlockOf<'ui_component'>);
-  if (block.type !== 'ui_screen') return emptyScreenRoot();
+export function seedScreenHtml(block: Block, diagram: Diagram): string {
+  if (block.type === 'ui_component') return seedComponentHtml(block as BlockOf<'ui_component'>);
+  if (block.type !== 'ui_screen') return emptyScreenHtml();
 
   const data = (block as BlockOf<'ui_screen'>).data;
   const shape = shapeHint(`${data.layout} ${data.purpose} ${block.name}`);
-  const content: DesignElement[] = [];
+  const content: string[] = [];
 
   if (data.purpose || block.summary) {
-    content.push(
-      createElement('text', {
-        name: 'Purpose',
-        text: data.purpose || block.summary,
-        style: { text: 'body.md', color: 'subtle' },
-      }),
-    );
+    content.push(`  <p class="muted">${esc(data.purpose || block.summary)}</p>`);
   }
 
   // Components the block names are instances, not copies — pointing at the
@@ -172,170 +166,88 @@ export function seedScreenRoot(block: Block, diagram: Diagram): DesignElement {
   const byName = new Map(diagram.blocks.map((b) => [b.name.toLowerCase(), b]));
   for (const name of data.components) {
     const target = byName.get(name.toLowerCase());
-    content.push(
-      createElement('component', {
-        name,
-        text: name,
-        componentId: target?.id ?? '',
-      }),
-    );
+    content.push(`  <div class="card" data-component="${esc(target?.id ?? '')}">${esc(name)}</div>`);
   }
 
   // The state the screen holds is the state it has to capture or show.
   const fields = data.state;
   if (fields.length) {
-    const controls = fields.map(controlFor);
-    content.push(
-      createElement(shape === 'form' || fields.length > 1 ? 'form' : 'stack', {
-        name: 'Details',
-        layout: { direction: 'column', gap: 16 },
-        children: controls,
-      }),
-    );
+    const tag = shape === 'form' || fields.length > 1 ? 'form' : 'div';
+    content.push(`  <${tag} class="col">\n${fields.map(controlFor).join('\n')}\n  </${tag}>`);
   }
 
   if (shape === 'table') {
+    const columns = fields.length
+      ? fields.slice(0, 4).map((f) => humanize(f.name))
+      : ['Name', 'Status', 'Updated'];
     content.push(
-      createElement('table', {
-        name: 'Records',
-        columns: fields.length ? fields.slice(0, 4).map((f) => humanize(f.name)) : ['Name', 'Status', 'Updated'],
-        repeat: { over: block.name, count: 5 },
-      }),
+      `  <table data-repeat="${esc(block.name)}" data-repeat-count="5">
+    <thead><tr>${columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+    <tbody><tr>${columns.map(() => '<td>\u2014</td>').join('')}</tr></tbody>
+  </table>`,
     );
   } else if (shape === 'grid') {
     content.push(
-      createElement('grid', {
-        name: 'Records',
-        layout: { columns: 3, gap: 16 },
-        repeat: { over: block.name, count: 6 },
-        children: [recordCard('Item')],
-      }),
+      `  <div class="grid" data-repeat="${esc(block.name)}" data-repeat-count="6">\n${recordCard('Item')}\n  </div>`,
     );
   } else if (shape === 'list') {
     content.push(
-      createElement('list', {
-        name: 'Records',
-        repeat: { over: block.name, count: 3 },
-        children: [recordCard('Item')],
-      }),
+      `  <div class="col" data-repeat="${esc(block.name)}" data-repeat-count="3">\n${recordCard('Item')}\n  </div>`,
     );
   }
 
   // Actions become the buttons, already carrying what they call. A navigation
-  // edge out of this screen tells us where the last one goes.
+  // edge out of this screen says where the first one goes.
   if (data.actions.length) {
-    const navTarget = diagram.edges.find(
+    const navEdge = diagram.edges.find(
       (edge) => edge.source === block.id && edge.type === 'navigation',
     );
-    const target = navTarget
-      ? diagram.blocks.find((b) => b.id === navTarget.target)
-      : undefined;
+    const target = navEdge ? diagram.blocks.find((b) => b.id === navEdge.target) : undefined;
 
+    const buttons = data.actions.map((action, index) => {
+      const does = action.calls || action.description;
+      const goes = index === 0 && target ? ` data-navigates-to="${esc(target.name)}"` : '';
+      const primary = index === 0 ? ' primary' : '';
+      return `    <button class="btn${primary}" data-action="${esc(does)}"${goes}>${esc(action.name)}</button>`;
+    });
     content.push(
-      createElement('stack', {
-        name: 'Actions',
-        layout: { direction: 'row', gap: 12, justify: 'end', align: 'center' },
-        children: data.actions.map((action, index) =>
-          createElement('button', {
-            name: action.name,
-            text: action.name,
-            variant: index === 0 ? 'primary' : 'secondary',
-            action: action.calls || action.description,
-            navigatesTo: index === 0 && target ? target.name : '',
-            style:
-              index === 0
-                ? {}
-                : { background: 'surface', color: 'text', border: 'border', borderWidth: 1 },
-          }),
-        ),
-      }),
+      `  <div class="row" style="justify-content: flex-end">\n${buttons.join('\n')}\n  </div>`,
     );
   }
 
-  if (!content.length) {
-    content.push(
-      createElement('text', {
-        name: 'Placeholder',
-        text: 'Nothing designed yet.',
-        style: { color: 'subtle' },
-      }),
-    );
-  }
+  if (!content.length) content.push('  <p class="muted">Nothing designed yet.</p>');
 
-  const header = createElement('header', {
-    name: 'Header',
-    children: [
-      createElement('heading', { name: 'Title', text: block.name }),
-      createElement('spacer', { name: 'Spacer' }),
-      ...(data.permissions.length ? [createElement('avatar', { name: 'Account' })] : []),
-    ],
-  });
-
-  return createElement('stack', {
-    name: 'Screen',
-    layout: { direction: 'column', gap: 0, width: 'fill', height: 'fill' },
-    children: [
-      header,
-      createElement('stack', {
-        name: 'Content',
-        layout: {
-          direction: 'column',
-          gap: 24,
-          padding: { top: 32, right: 32, bottom: 32, left: 32 },
-          width: 'fill',
-          grow: 1,
-        },
-        children: content,
-      }),
-    ],
-  }) as DesignElement;
+  const account = data.permissions.length ? '\n    <span class="avatar"></span>' : '';
+  return `<main class="screen">
+  <header class="topbar">
+    <h1 class="text-heading-lg grow">${esc(block.name)}</h1>${account}
+  </header>
+${content.join('\n')}
+</main>`;
 }
 
 /** A `ui_component` block as a wireframe: its props, its buttons. */
-function seedComponentRoot(block: BlockOf<'ui_component'>): DesignElement {
-  const children: DesignElement[] = [
-    createElement('text', {
-      name: 'Title',
-      text: block.name,
-      style: { text: 'heading.sm' },
-    }),
-  ];
+function seedComponentHtml(block: BlockOf<'ui_component'>): string {
+  const parts: string[] = [`  <strong class="text-heading-sm">${esc(block.name)}</strong>`];
+
   if (block.data.purpose || block.summary) {
-    children.push(
-      createElement('text', {
-        name: 'Purpose',
-        text: block.data.purpose || block.summary,
-        style: { text: 'body.sm', color: 'subtle' },
-      }),
-    );
+    parts.push(`  <p class="muted text-body-sm">${esc(block.data.purpose || block.summary)}</p>`);
   }
   for (const prop of block.data.props) {
-    children.push(
-      createElement('text', {
-        name: prop.name,
-        text: `${humanize(prop.name)}: ${prop.example || prop.type}`,
-        style: { text: 'body.sm' },
-        binding: `props.${prop.name}`,
-      }),
+    parts.push(
+      `  <p class="text-body-sm" data-binding="props.${esc(prop.name)}">` +
+        `${esc(humanize(prop.name))}: ${esc(prop.example || prop.type)}</p>`,
     );
   }
   for (const emit of block.data.emits) {
-    children.push(
-      createElement('button', {
-        name: emit.name,
-        text: humanize(emit.name),
-        variant: 'secondary',
-        action: emit.description || `emits ${emit.name}`,
-        style: { background: 'surface', color: 'text', border: 'border', borderWidth: 1 },
-      }),
+    parts.push(
+      `  <button class="btn" data-action="${esc(emit.description || `emits ${emit.name}`)}">` +
+        `${esc(humanize(emit.name))}</button>`,
     );
   }
-  return createElement('card', {
-    name: block.name,
-    layout: { direction: 'column', gap: 12, width: 'fill', height: 'hug' },
-    children,
-  }) as DesignElement;
+  return `<article class="card col">\n${parts.join('\n')}\n</article>`;
 }
+
 
 /** Screens get a screen-sized frame; components get a small one. */
 function deviceFor(block: Block, diagram: Diagram): Device {
@@ -367,7 +279,7 @@ export function seedScreen(block: Block, diagram: Diagram, order = 0): ScreenDes
     purpose,
     device,
     frame: frameFor(block, device),
-    root: seedScreenRoot(block, diagram),
+    html: seedScreenHtml(block, diagram),
     order,
   });
 }
@@ -555,24 +467,30 @@ export function designProgress(diagram: Diagram, document: DesignDocument): Desi
   const unboundFields: DesignProgress['unboundFields'] = [];
   let elements = 0;
 
+  // The two holes worth chasing, now that the format cannot enforce them.
+  //
+  // A typed tree could promise a `button` had an `action` because the schema
+  // said so; markup cannot, so these checks stop being a nicety and become the
+  // safety net. Both read as plainly as the selector they are: something you
+  // press that neither calls nor goes anywhere, and something you type into
+  // with nowhere to put the value.
+  const PRESSABLE = new Set(['button', 'a']);
+  const FIELDS = new Set(['input', 'textarea', 'select']);
+
   for (const screen of document.screens) {
-    for (const element of walkElements(screen.root)) {
+    for (const element of walkScreen(screen.html)) {
       elements += 1;
-      const named = element.name || element.text || element.label || element.type;
-      if (
-        (element.type === 'button' || element.type === 'link') &&
-        !element.action.trim() &&
-        !element.navigatesTo.trim()
-      ) {
-        danglingActions.push({ screen: screen.name, element: named });
+      const facts = factsOf(element);
+
+      if (PRESSABLE.has(facts.tag) && !facts.action.trim() && !facts.navigatesTo.trim()) {
+        danglingActions.push({ screen: screen.name, element: facts.label });
       }
-      if (
-        ['input', 'textarea', 'select', 'checkbox', 'radio', 'toggle', 'slider', 'upload'].includes(
-          element.type,
-        ) &&
-        !element.binding.trim()
-      ) {
-        unboundFields.push({ screen: screen.name, element: named });
+      // A submit button is an `input` in name only, and a checkbox inside a
+      // row of filters is as much a field as a text box.
+      const inputKind = facts.tag === 'input' ? getAttr(element, 'type').toLowerCase() : '';
+      const isField = FIELDS.has(facts.tag) && !['submit', 'button', 'reset'].includes(inputKind);
+      if (isField && !facts.binding.trim()) {
+        unboundFields.push({ screen: screen.name, element: facts.label });
       }
     }
   }

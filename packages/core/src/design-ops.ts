@@ -1,24 +1,31 @@
-import { ELEMENT_CATALOG, isContainer } from './design-catalog.js';
+import { ARTBOARD_BAR, ARTBOARD_GAP, createScreen } from './design-factory.js';
 import {
-  ARTBOARD_BAR,
-  ARTBOARD_GAP,
-  createElement,
-  createScreen,
-  reidentify,
-} from './design-factory.js';
+  EL_ID,
+  findHtml,
+  getAttr,
+  hasAttr,
+  normalizeHtml,
+  ownTextOf,
+  parentOf,
+  parseHtml,
+  removeAttr,
+  reidentifyHtml,
+  sanitizeCss,
+  serializeHtml,
+  serializeOuterHtml,
+  setAttr,
+  textOf,
+  walkHtml,
+  type HtmlElement,
+  type HtmlFragment,
+} from './design-html.js';
 import {
   DesignSystemSchema,
   DEVICE_FRAMES,
   ScreenDesignSchema,
   type DesignDocument,
-  type DesignElement,
-  type DesignElementInput,
-  type DesignLayout,
-  type DesignOption,
-  type DesignStyle,
   type DesignSystem,
   type Device,
-  type ElementType,
   type ScreenDesign,
   type ScreenState,
   type ScreenStatus,
@@ -40,247 +47,79 @@ import { nowIso } from './ids.js';
  */
 
 /* ------------------------------------------------------------------ *
- * Walking the tree
- * ------------------------------------------------------------------ */
-
-export interface ElementLocation {
-  element: DesignElement;
-  /** Null when the element is the screen's root. */
-  parent: DesignElement | null;
-  index: number;
-  /** Root-first path to the element, inclusive. */
-  path: DesignElement[];
-}
-
-/** Depth-first search for an element by id, or by name when that is unique. */
-export function findElement(root: DesignElement, ref: string): ElementLocation | null {
-  const needle = ref.trim();
-  const byId = locate(root, (el) => el.id === needle);
-  if (byId) return byId;
-  const lower = needle.toLowerCase();
-  return locate(root, (el) => el.name.trim().toLowerCase() === lower && lower !== '');
-}
-
-function locate(
-  root: DesignElement,
-  match: (element: DesignElement) => boolean,
-): ElementLocation | null {
-  if (match(root)) return { element: root, parent: null, index: -1, path: [root] };
-
-  const stack: { element: DesignElement; path: DesignElement[] }[] = [{ element: root, path: [root] }];
-  while (stack.length) {
-    const { element, path } = stack.pop()!;
-    for (let index = 0; index < element.children.length; index++) {
-      const child = element.children[index]!;
-      const childPath = [...path, child];
-      if (match(child)) return { element: child, parent: element, index, path: childPath };
-      stack.push({ element: child, path: childPath });
-    }
-  }
-  return null;
-}
-
-/** Every element in the tree, root first. */
-export function walkElements(root: DesignElement): DesignElement[] {
-  const out: DesignElement[] = [];
-  const visit = (element: DesignElement): void => {
-    out.push(element);
-    for (const child of element.children) visit(child);
-  };
-  visit(root);
-  return out;
-}
-
-export function countElements(root: DesignElement): number {
-  return walkElements(root).length;
-}
-
-/** A copy of the tree with one element replaced. Returns null if not found. */
-function replaceElement(
-  root: DesignElement,
-  id: string,
-  next: DesignElement,
-): DesignElement | null {
-  if (root.id === id) return next;
-  let hit = false;
-  const children = root.children.map((child) => {
-    const replaced = replaceElement(child, id, next);
-    if (replaced) hit = true;
-    return replaced ?? child;
-  });
-  return hit ? { ...root, children } : null;
-}
-
-/** A copy of the tree with one element (and its subtree) taken out. */
-function detachElement(
-  root: DesignElement,
-  id: string,
-): { root: DesignElement; removed: DesignElement } | null {
-  const found = root.children.findIndex((child) => child.id === id);
-  if (found >= 0) {
-    const removed = root.children[found]!;
-    const children = [...root.children];
-    children.splice(found, 1);
-    return { root: { ...root, children }, removed };
-  }
-  for (let i = 0; i < root.children.length; i++) {
-    const result = detachElement(root.children[i]!, id);
-    if (!result) continue;
-    const children = [...root.children];
-    children[i] = result.root;
-    return { root: { ...root, children }, removed: result.removed };
-  }
-  return null;
-}
-
-/** A copy of the tree with an element inserted under `parentId` at `index`. */
-function attachElement(
-  root: DesignElement,
-  parentId: string,
-  index: number,
-  element: DesignElement,
-): DesignElement | null {
-  if (root.id === parentId) {
-    const children = [...root.children];
-    const at = index < 0 || index > children.length ? children.length : index;
-    children.splice(at, 0, element);
-    return { ...root, children };
-  }
-  let hit = false;
-  const children = root.children.map((child) => {
-    const next = attachElement(child, parentId, index, element);
-    if (next) hit = true;
-    return next ?? child;
-  });
-  return hit ? { ...root, children } : null;
-}
-
-/** True when `ancestorId` is at or above `id` — a move that would eat itself. */
-function contains(root: DesignElement, ancestorId: string, id: string): boolean {
-  const found = findElement(root, ancestorId);
-  if (!found) return false;
-  return walkElements(found.element).some((el) => el.id === id);
-}
-
-/* ------------------------------------------------------------------ *
- * Reading a tree written by hand
+ * Walking a screen
  * ------------------------------------------------------------------ */
 
 /**
- * Turn loose JSON into a real element tree.
+ * Every element on a screen, outermost first.
  *
- * This is the door Claude comes through. A model writing a screen supplies
- * types and words, not ids and not a full style block, so ids are minted for
- * anything without one and the catalog's defaults fill the rest — meaning
- * `{ type: 'button', text: 'Sign in' }` arrives as a properly padded, properly
- * coloured button rather than a naked rectangle.
+ * The tree had `walkElements`; this is the same idea over markup, and the
+ * handful of things that used it — counting a design, finding the buttons that
+ * do nothing — work the same way against the same shape.
  */
-export function hydrateElement(raw: unknown): DesignElement {
-  if (!raw || typeof raw !== 'object') {
-    throw new Error('An element must be an object with at least a "type".');
-  }
-  const source = raw as Record<string, unknown>;
-  const type = (source['type'] ?? 'frame') as ElementType;
-  if (!ELEMENT_CATALOG[type]) {
-    throw new Error(
-      `"${String(source['type'])}" is not an element type. Call describe_design_schema for the list.`,
-    );
-  }
-
-  const rawChildren = Array.isArray(source['children']) ? source['children'] : [];
-  const children = rawChildren.map(hydrateElement);
-  if (children.length && !isContainer(type)) {
-    throw new Error(`A ${ELEMENT_CATALOG[type].label.toLowerCase()} cannot hold other elements.`);
-  }
-
-  const patch: Partial<DesignElementInput> = { ...(source as Partial<DesignElementInput>) };
-  delete patch.children;
-  if (typeof patch.id !== 'string' || !patch.id) delete patch.id;
-
-  const element = createElement(type, patch);
-  return { ...element, children };
+export function walkScreen(html: string): HtmlElement[] {
+  return walkHtml(parseHtml(html));
 }
 
-/**
- * Put anything placed at x/y back into the flow it belongs in.
- *
- * `absolute` has always meant "only inside a `frame`" — the schema says so and
- * the design rules say so — but nothing enforced it, and a model asked to draw
- * a screen reaches for coordinates because that is what drawing a screen looks
- * like everywhere else. The result is the worst failure this tool has: every
- * child leaves the flow, they all land on the coordinates the model guessed,
- * the parent collapses to nothing, and the screen the user was going to show a
- * client is a pile of overlapping text.
- *
- * Guessing is the problem, not coordinates. A model cannot know how tall a
- * heading in `heading.lg` renders, so `y: 32` then `y: 96` is a coin toss; a
- * column with a gap always comes out right. So a tree written that way is not
- * rejected — it is settled back into its stack, in the order it was written,
- * which is what the author meant by putting one element below another.
- *
- * Inside a `frame` it is left alone: that container exists precisely for the
- * background, the badge over a corner, the genuine overlap.
- */
-export function settleFreePlacement(root: DesignElement): {
-  root: DesignElement;
-  settled: string[];
-} {
-  const settled: string[] = [];
+export function countElements(html: string): number {
+  return walkScreen(html).length;
+}
 
-  // The root has no parent to be placed against, so its own `absolute` is
-  // meaningless rather than wrong: cleared, but not worth reporting.
-  const visit = (element: DesignElement, parentType: ElementType | null): DesignElement => {
-    const children = element.children.map((child) => visit(child, element.type));
-    const loose = element.layout.absolute && parentType !== 'frame';
-    if (loose && parentType !== null) settled.push(element.name || elementWords(element));
-    return {
-      ...element,
-      layout: loose ? { ...element.layout, absolute: false, x: 0, y: 0 } : element.layout,
-      children,
-    };
+/** Read one element and everything it declares, without the caller parsing. */
+export interface ElementFacts {
+  id: string;
+  tag: string;
+  /** What to call it in a message: its name, its words, or its tag. */
+  label: string;
+  text: string;
+  classes: string[];
+  binding: string;
+  action: string;
+  navigatesTo: string;
+  component: string;
+  visibleWhen: string;
+  repeat: { over: string; count: number } | null;
+  required: boolean;
+  disabled: boolean;
+  hidden: boolean;
+}
+
+export function factsOf(element: HtmlElement): ElementFacts {
+  const repeatOver = getAttr(element, 'data-repeat');
+  const name = getAttr(element, 'data-name');
+  // Its own words, not its descendants'. A container falling back to
+  // everything underneath it turns an outline into a wall of repeated text —
+  // only something with nothing nested inside it can borrow its children's.
+  const leaf = !walkHtml(element).length;
+  const words = ownTextOf(element) || (leaf ? textOf(element) : '');
+  return {
+    id: getAttr(element, EL_ID),
+    tag: element.tagName.toLowerCase(),
+    label: name || words || element.tagName.toLowerCase(),
+    text: words,
+    classes: getAttr(element, 'class').split(/\s+/).filter(Boolean),
+    binding: getAttr(element, 'data-binding'),
+    action: getAttr(element, 'data-action'),
+    navigatesTo: getAttr(element, 'data-navigates-to'),
+    component: getAttr(element, 'data-component'),
+    visibleWhen: getAttr(element, 'data-visible-when'),
+    repeat: repeatOver
+      ? { over: repeatOver, count: Number(getAttr(element, 'data-repeat-count')) || 3 }
+      : null,
+    required: hasAttr(element, 'required'),
+    disabled: hasAttr(element, 'disabled'),
+    hidden: hasAttr(element, 'hidden'),
   };
-
-  return { root: visit(root, null), settled };
 }
 
-/** Something to call an element by in a message, when it has no name. */
-function elementWords(element: DesignElement): string {
-  const words = element.text || element.label || element.placeholder;
-  return words ? `${element.type} "${words}"` : element.type;
+/** True when `ancestor` is at or above `id` — a move that would eat itself. */
+function containsNode(ancestor: HtmlElement, id: string): boolean {
+  return walkHtml(ancestor).some((el) => getAttr(el, EL_ID) === id);
 }
 
 /* ------------------------------------------------------------------ *
  * Operations
  * ------------------------------------------------------------------ */
-
-/** Fields of an element that an update may set. Structural ones are excluded. */
-export interface ElementPatch {
-  name?: string;
-  type?: ElementType;
-  text?: string;
-  label?: string;
-  placeholder?: string;
-  helper?: string;
-  variant?: string;
-  icon?: string;
-  src?: string;
-  alt?: string;
-  options?: DesignOption[];
-  columns?: string[];
-  repeat?: { over?: string; count?: number } | null;
-  layout?: Partial<DesignLayout>;
-  style?: Partial<DesignStyle>;
-  binding?: string;
-  action?: string;
-  navigatesTo?: string;
-  visibleWhen?: string;
-  componentId?: string;
-  required?: boolean;
-  disabled?: boolean;
-  hidden?: boolean;
-  locked?: boolean;
-  notes?: string;
-}
 
 export interface ScreenPatch {
   name?: string;
@@ -308,7 +147,8 @@ export type DesignOperation =
       purpose?: string;
       device?: Device;
       background?: string;
-      root?: unknown;
+      html?: string;
+      css?: string;
       states?: ScreenState[];
       /** Place it after this screen in the walkthrough, by id or name. */
       after?: string;
@@ -320,26 +160,30 @@ export type DesignOperation =
   /** The whole walkthrough order, by id or name; anything left out keeps its place at the end. */
   | { op: 'reorder_screens'; order: string[] }
   /**
-   * Replace a screen's whole element tree. The tool of choice for designing a
-   * screen: write it as one nested object rather than forty add_elements.
+   * Replace a screen's markup. The tool of choice for designing a screen:
+   * write the whole thing at once rather than thirty small edits.
    */
-  | { op: 'set_tree'; screen: string; root: unknown }
+  | { op: 'set_html'; screen: string; html: string }
+  /** Replace a screen's own CSS. Omit `screen` for the shared stylesheet. */
+  | { op: 'set_css'; screen?: string; css: string }
+  /** Put markup inside, before or after an element. */
   | {
-      op: 'add_element';
+      op: 'insert_html';
       screen: string;
-      type: ElementType;
-      /** Container to put it in. Defaults to the screen's root. */
-      parent?: string;
-      /** Position among its siblings. Defaults to last. */
+      html: string;
+      /** Element to place it against, by `data-el`. Defaults to the outermost. */
+      target?: string;
+      where?: 'inside' | 'before' | 'after';
+      /** Position among the target's children, for `inside`. Defaults to last. */
       index?: number;
-      /** A whole subtree, instead of a single element. */
-      children?: unknown[];
-      props?: ElementPatch;
     }
-  | ({ op: 'update_element'; screen: string; element: string } & ElementPatch)
-  | { op: 'remove_element'; screen: string; element: string }
-  | { op: 'duplicate_element'; screen: string; element: string }
-  | { op: 'move_element'; screen: string; element: string; parent: string; index?: number }
+  /** Set or clear one attribute — `data-binding`, `class`, `placeholder`. */
+  | { op: 'set_attribute'; screen: string; element: string; name: string; value: string | null }
+  /** Replace the words on an element, leaving anything nested inside it alone. */
+  | { op: 'set_text'; screen: string; element: string; text: string }
+  | { op: 'move_node'; screen: string; element: string; parent: string; index?: number }
+  | { op: 'remove_node'; screen: string; element: string }
+  | { op: 'duplicate_node'; screen: string; element: string }
   | { op: 'set_system'; system: Partial<DesignSystem> }
   | { op: 'set_notes'; notes: string };
 
@@ -372,6 +216,7 @@ export function editDesign(
   let screens = [...document.screens];
   let system = document.system;
   let notes = document.notes;
+  let documentCss = document.css;
   const errors: EditDesignResult['errors'] = [];
   const loose: string[] = [];
   let applied = 0;
@@ -390,12 +235,22 @@ export function editDesign(
     );
   };
 
-  /** Nothing reaches the document with elements floating outside a frame. */
+  /**
+   * Nothing reaches the document without being sanitised and identified.
+   *
+   * The typed tree had `hydrateElement` as its one door in; this is the same
+   * bargain for markup. Whatever came in, what lands is safe to render and has
+   * a `data-el` on everything, so the canvas can address it.
+   */
   const settle = (screen: ScreenDesign): ScreenDesign => {
-    const { root, settled } = settleFreePlacement(screen.root);
-    if (!settled.length) return screen;
-    loose.push(...settled.map((name) => `${screen.name || screen.id} → ${name}`));
-    return { ...screen, root };
+    const { html, removed } = normalizeHtml(screen.html);
+    const css = sanitizeCss(screen.css);
+    if (removed.length || css.removed.length) {
+      loose.push(
+        ...[...removed, ...css.removed].map((what) => `${screen.name || screen.id} → ${what}`),
+      );
+    }
+    return { ...screen, html, css: css.css };
   };
 
   const put = (screen: ScreenDesign): void => {
@@ -403,6 +258,32 @@ export function editDesign(
     const next = { ...settle(screen), updatedAt: nowIso() };
     if (at >= 0) screens[at] = next;
     else screens.push(next);
+  };
+
+  /**
+   * Edit one screen's markup, reporting a missing screen consistently.
+   *
+   * The document is parsed, changed and written back on every operation. That
+   * is more work than mutating a tree in place, and it is the price of the
+   * format being text — but a batch of twenty edits is twenty small parses of
+   * one screen, which is nothing next to rendering it.
+   */
+  const withHtml = (
+    ref: string,
+    change: (fragment: HtmlFragment, screen: ScreenDesign) => void,
+  ): void => {
+    const screen = resolveScreen(ref);
+    if (!screen) throw new Error(`No screen matching "${ref}".`);
+    const fragment = parseHtml(screen.html);
+    change(fragment, screen);
+    put({ ...screen, html: serializeHtml(fragment), edited: true });
+  };
+
+  /** Resolve an element on a screen, or say so plainly. */
+  const nodeOf = (fragment: HtmlFragment, ref: string): HtmlElement => {
+    const found = findHtml(fragment, ref);
+    if (!found) throw new Error(`No element matching "${ref}" on that screen.`);
+    return found;
   };
 
   /** Where a new artboard goes: to the right of the last one. */
@@ -416,16 +297,6 @@ export function editDesign(
 
   const renumber = (): void => {
     screens = screens.map((screen, index) => ({ ...screen, order: index }));
-  };
-
-  /** Edit one screen's tree, reporting a missing element consistently. */
-  const withTree = (
-    ref: string,
-    change: (screen: ScreenDesign) => DesignElement,
-  ): void => {
-    const screen = resolveScreen(ref);
-    if (!screen) throw new Error(`No screen matching "${ref}".`);
-    put({ ...screen, root: change(screen), edited: true });
   };
 
   operations.forEach((operation, index) => {
@@ -445,7 +316,8 @@ export function editDesign(
             device,
             background: operation.background ?? 'background',
             position: nextArtboardPosition(preset.width),
-            root: operation.root === undefined ? undefined : hydrateElement(operation.root),
+            html: operation.html,
+            css: operation.css,
           });
           const withStates: ScreenDesign = settle(
             operation.states?.length ? { ...screen, states: operation.states } : screen,
@@ -515,7 +387,10 @@ export function editDesign(
             frame: screen.frame,
             background: screen.background,
             position: nextArtboardPosition(screen.frame.width),
-            root: reidentify(screen.root),
+            // Fresh ids throughout, so selecting something on the copy never
+            // reaches back into the screen it was copied from.
+            html: reidentifyHtml(screen.html),
+            css: screen.css,
           });
           screens.splice(screens.indexOf(screen) + 1, 0, { ...copy, states: screen.states });
           renumber();
@@ -547,139 +422,127 @@ export function editDesign(
           break;
         }
 
-        case 'set_tree': {
-          withTree(operation.screen, () => hydrateElement(operation.root));
+        case 'set_html': {
+          const screen = resolveScreen(operation.screen);
+          if (!screen) throw new Error(`No screen matching "${operation.screen}".`);
+          put({ ...screen, html: operation.html, edited: true });
           break;
         }
 
-        case 'add_element': {
-          const type = operation.type;
-          if (!ELEMENT_CATALOG[type]) throw new Error(`"${type}" is not an element type.`);
-          withTree(operation.screen, (screen) => {
-            const element = hydrateElement({
-              ...(operation.props ?? {}),
-              type,
-              children: operation.children ?? [],
-            });
-            const parentRef = operation.parent ?? screen.root.id;
-            const parent = findElement(screen.root, parentRef);
-            if (!parent) throw new Error(`No element matching "${parentRef}" to put it in.`);
-            if (!isContainer(parent.element.type)) {
-              throw new Error(
-                `"${parent.element.name || parent.element.type}" cannot hold other elements.`,
-              );
+        case 'set_css': {
+          if (!operation.screen) {
+            const cleaned = sanitizeCss(operation.css);
+            if (cleaned.removed.length) {
+              loose.push(...cleaned.removed.map((what) => `the shared stylesheet → ${what}`));
             }
-            const next = attachElement(
-              screen.root,
-              parent.element.id,
-              operation.index ?? -1,
-              element,
-            );
-            if (!next) throw new Error(`Could not place the element in "${parentRef}".`);
-            return next;
+            documentCss = cleaned.css;
+            break;
+          }
+          const screen = resolveScreen(operation.screen);
+          if (!screen) throw new Error(`No screen matching "${operation.screen}".`);
+          put({ ...screen, css: operation.css, edited: true });
+          break;
+        }
+
+        case 'insert_html': {
+          const where = operation.where ?? 'inside';
+          withHtml(operation.screen, (fragment) => {
+            const added = parseHtml(normalizeHtml(operation.html).html);
+            const moved = [...added.childNodes];
+            if (!moved.length) throw new Error('There was no markup to insert.');
+
+            // Without a target the markup joins the screen's outermost element,
+            // which is what "add this to the screen" nearly always means.
+            const outermost = walkHtml(fragment)[0];
+            const target = operation.target ? nodeOf(fragment, operation.target) : outermost;
+            if (!target) throw new Error('That screen has nothing to insert against yet.');
+
+            const parent = where === 'inside' ? target : parentOf(target);
+            if (!parent) throw new Error('That element has nothing around it to insert into.');
+
+            const siblings = parent.childNodes;
+            const at =
+              where === 'inside'
+                ? operation.index === undefined || operation.index < 0
+                  ? siblings.length
+                  : Math.min(operation.index, siblings.length)
+                : siblings.indexOf(target) + (where === 'after' ? 1 : 0);
+
+            for (const node of moved) node.parentNode = parent;
+            siblings.splice(at, 0, ...(moved as typeof siblings));
           });
           break;
         }
 
-        case 'update_element': {
-          const { op: _op, screen: _ref, element: elementRef, ...patch } = operation;
-          withTree(operation.screen, (screen) => {
-            const found = findElement(screen.root, elementRef);
-            if (!found) throw new Error(`No element matching "${elementRef}".`);
-            const current = found.element;
-
-            // A retyped element keeps its words and its children but takes the
-            // new type's defaults, which is what "make this a link instead"
-            // has to mean if the result is to look like a link.
-            const base =
-              patch.type && patch.type !== current.type
-                ? {
-                    ...createElement(patch.type, { id: current.id }),
-                    name: current.name,
-                    text: current.text,
-                    label: current.label,
-                    binding: current.binding,
-                    action: current.action,
-                    navigatesTo: current.navigatesTo,
-                    children: isContainer(patch.type) ? current.children : [],
-                  }
-                : current;
-
-            const next: DesignElement = {
-              ...patchOver(base, patch as Partial<DesignElement>),
-              id: current.id,
-              type: patch.type ?? current.type,
-              layout: patch.layout ? patchOver(base.layout, patch.layout) : base.layout,
-              style: patch.style ? patchOver(base.style, patch.style) : base.style,
-              repeat:
-                patch.repeat === undefined
-                  ? base.repeat
-                  : patch.repeat === null
-                    ? null
-                    : { over: patch.repeat.over ?? '', count: patch.repeat.count ?? 3 },
-              children: base.children,
-            };
-
-            const replaced = replaceElement(screen.root, current.id, next);
-            if (!replaced) throw new Error(`Could not update "${elementRef}".`);
-            return replaced;
-          });
-          break;
-        }
-
-        case 'remove_element': {
-          withTree(operation.screen, (screen) => {
-            if (screen.root.id === operation.element || screen.root.name === operation.element) {
-              throw new Error('The screen itself cannot be removed — use remove_screen.');
+        case 'set_attribute': {
+          withHtml(operation.screen, (fragment) => {
+            const node = nodeOf(fragment, operation.element);
+            if (operation.name === EL_ID) {
+              throw new Error(`"${EL_ID}" is how the editor addresses an element; it cannot be set.`);
             }
-            const found = findElement(screen.root, operation.element);
-            if (!found) throw new Error(`No element matching "${operation.element}".`);
-            const result = detachElement(screen.root, found.element.id);
-            if (!result) throw new Error(`Could not remove "${operation.element}".`);
-            return result.root;
+            if (operation.value === null) removeAttr(node, operation.name);
+            else setAttr(node, operation.name, operation.value);
           });
           break;
         }
 
-        case 'duplicate_element': {
-          withTree(operation.screen, (screen) => {
-            const found = findElement(screen.root, operation.element);
-            if (!found) throw new Error(`No element matching "${operation.element}".`);
-            if (!found.parent) throw new Error('The screen itself cannot be duplicated here.');
-            const copy = reidentify(found.element);
-            const next = attachElement(screen.root, found.parent.id, found.index + 1, copy);
-            if (!next) throw new Error(`Could not duplicate "${operation.element}".`);
-            return next;
+        case 'set_text': {
+          withHtml(operation.screen, (fragment) => {
+            const node = nodeOf(fragment, operation.element);
+            // Only the words directly on it go. Anything nested inside stays
+            // where it is, so retitling a card does not empty the card.
+            const kept = node.childNodes.filter((child) => child.nodeName !== '#text');
+            const text = { nodeName: '#text', value: operation.text, parentNode: node } as never;
+            node.childNodes = operation.text ? [text, ...kept] : kept;
           });
           break;
         }
 
-        case 'move_element': {
-          withTree(operation.screen, (screen) => {
-            const found = findElement(screen.root, operation.element);
-            if (!found) throw new Error(`No element matching "${operation.element}".`);
-            if (!found.parent) throw new Error('The screen itself cannot be moved.');
-            const parent = findElement(screen.root, operation.parent);
-            if (!parent) throw new Error(`No element matching "${operation.parent}".`);
-            if (!isContainer(parent.element.type)) {
-              throw new Error(
-                `"${parent.element.name || parent.element.type}" cannot hold other elements.`,
-              );
-            }
-            if (contains(screen.root, found.element.id, parent.element.id)) {
+        case 'move_node': {
+          withHtml(operation.screen, (fragment) => {
+            const node = nodeOf(fragment, operation.element);
+            const parent = nodeOf(fragment, operation.parent);
+            if (node === parent || containsNode(node, getAttr(parent, EL_ID))) {
               throw new Error('An element cannot be moved inside itself.');
             }
+            const from = parentOf(node);
+            if (!from) throw new Error('The outermost element of a screen cannot be moved.');
 
-            const detached = detachElement(screen.root, found.element.id);
-            if (!detached) throw new Error(`Could not move "${operation.element}".`);
-            const next = attachElement(
-              detached.root,
-              parent.element.id,
-              operation.index ?? -1,
-              detached.removed,
-            );
-            if (!next) throw new Error(`Could not place "${operation.element}" there.`);
-            return next;
+            from.childNodes.splice(from.childNodes.indexOf(node), 1);
+            const at =
+              operation.index === undefined || operation.index < 0
+                ? parent.childNodes.length
+                : Math.min(operation.index, parent.childNodes.length);
+            node.parentNode = parent;
+            parent.childNodes.splice(at, 0, node);
+          });
+          break;
+        }
+
+        case 'remove_node': {
+          withHtml(operation.screen, (fragment) => {
+            const node = nodeOf(fragment, operation.element);
+            const parent = parentOf(node);
+            if (!parent) {
+              throw new Error(
+                'That is the outermost element of the screen — use remove_screen, or set_html to replace it.',
+              );
+            }
+            parent.childNodes.splice(parent.childNodes.indexOf(node), 1);
+          });
+          break;
+        }
+
+        case 'duplicate_node': {
+          withHtml(operation.screen, (fragment) => {
+            const node = nodeOf(fragment, operation.element);
+            const parent = parentOf(node);
+            if (!parent) throw new Error('The outermost element of a screen cannot be duplicated.');
+
+            const copy = parseHtml(reidentifyHtml(serializeOuterHtml(node)));
+            const made = [...copy.childNodes];
+            for (const child of made) child.parentNode = parent;
+            parent.childNodes.splice(parent.childNodes.indexOf(node) + 1, 0, ...(made as never[]));
           });
           break;
         }
@@ -738,6 +601,7 @@ export function editDesign(
       ...document,
       screens: relaxed.screens,
       system,
+      css: documentCss,
       notes,
       updatedAt: nowIso(),
     },
