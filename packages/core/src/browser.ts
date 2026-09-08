@@ -23,7 +23,6 @@ export * from './fold.js';
 export * from './client-view.js';
 export * from './client-sync.js';
 export * from './design.js';
-export * from './design-catalog.js';
 export * from './design-factory.js';
 export * from './design-html.js';
 export * from './design-ops.js';

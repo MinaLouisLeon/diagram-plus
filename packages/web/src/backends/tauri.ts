@@ -8,7 +8,6 @@ import {
   DiagramStore,
   EDGE_TYPES,
   EDGE_TYPE_INFO,
-  ELEMENT_CATEGORIES,
   RevisionConflictError,
   applyBatch,
   assignDiagramContent,
@@ -17,7 +16,6 @@ import {
   designProgress,
   diffDesign,
   editDesign,
-  elementCatalogList,
   exportDiagram,
   generateSpec,
   importDiagram,
@@ -151,8 +149,6 @@ const api: Api = {
       colors: Object.fromEntries(
         Object.entries(BLOCK_CATALOG).map(([type, info]) => [type, info.color]),
       ),
-      elementTypes: elementCatalogList(),
-      elementCategories: ELEMENT_CATEGORIES,
     };
   },
 

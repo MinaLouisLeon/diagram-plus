@@ -6,7 +6,7 @@ diagram-plus is two things that share one file:
 
 - **A visual editor** — a drag-and-drop canvas of typed blocks (screens, endpoints,
   services, data models, jobs…) connected by typed relationships.
-- **An MCP server** — 31 tools that let Claude Code create, edit and *read* those
+- **An MCP server** — 40 tools that let Claude Code create, edit and *read* those
   same diagrams.
 
 The diagram is a **machine-writable, human-editable specification** that sits between
@@ -40,7 +40,7 @@ readable by both of you.
 Nothing is hidden in a database. Diagrams live as pretty-printed JSON in
 `.diagrams/` inside your project, so they are reviewed and committed alongside the
 code they describe. The screen designs sit beside them in
-`.diagrams/<name>.design.json` — a separate file because a screen tree dwarfs the
+`.diagrams/<name>.design.json` — a separate file because a screen's markup dwarfs the
 graph it belongs to, and burying one in the other would make every diagram diff
 unreadable.
 
@@ -50,7 +50,7 @@ There are three documents, and they share a name:
 |---|---|---|
 | **Diagram** | `<name>.diagram.json` | What the application *is* — typed blocks and connections |
 | **Client view** | inside the diagram | The same thing in plain words, to review with a client |
-| **Design** | `<name>.design.json` | What each screen *looks like* — a typed layout tree |
+| **Design** | `<name>.design.json` | What each screen *looks like* — HTML and CSS |
 
 ---
 
@@ -291,39 +291,67 @@ mock-ups drift apart.
 What you get is a wireframe of the *right thing*, so the first real design decision
 is the first thing anyone has to make.
 
-#### It is layout, not markup
+#### A screen is HTML and CSS
 
-An element is a `button` or an `input`, not a rounded rectangle: it has a variant, a
-binding, an action. Sizes are `fill`, `hug` or a number rather than CSS, and colours
-are token names rather than hex. That is what lets the same document be dragged
-around by a person, written by Claude, and read as a contract by whoever builds it —
-and what stops an absolutely-positioned mock-up that cannot be built responsively.
+Claude writes real markup, and the browser lays it out. That is the whole difference
+between a wireframe and something you can put in front of a client: a `<table>` is a
+table with rows in it, not five grey dashes, and a heading is the size it will
+actually be.
+
+It was a typed tree of elements until version 2, on the theory that markup would
+round-trip badly. The theory was right about round-tripping and wrong about what
+mattered — a design nobody wants to show anyone is not worth round-tripping.
+
+What the tree gave for nothing, and markup has to earn, is *meaning*. The tag carries
+what a thing is; `data-*` carries the rest:
+
+```html
+<button class="btn primary" data-action="POST /api/session"
+        data-navigates-to="Products">Sign in</button>
+
+<input type="search" placeholder="Name or NHS number" data-binding="state.search">
+
+<table data-repeat="Patient" data-repeat-count="6"> … </table>
+```
+
+So the implementation spec is still *read* out of a screen rather than guessed at,
+and the panel that used to edit a typed element still edits those, offered against
+the diagram's own endpoints, models and screens.
+
+Colours and type stay tokens, never hex. The design system compiles to CSS custom
+properties and a class per type token, so a screen says `var(--color-accent)` and
+`class="text-heading-lg"`, and changing one in the tokens panel restyles every screen
+at once. Every project starts with a shared stylesheet good enough that plain
+semantic markup already looks deliberate.
 
 Screens are never silently lost. Delete a block from the diagram and its design is
 flagged, not destroyed; re-word a screen here and the next sync keeps your wording.
+A design written in the old format is translated on the way in, binding by binding.
 
 #### Nothing is ever drawn on top of anything else
 
-Two rules hold on every write, whoever made it — Claude over MCP, the editor, the
-REST API:
+Overlapping content used to be the worst failure this tool had, and the format cured
+it: the browser lays a screen out, so elements cannot land on each other however the
+markup is written. What is left is the canvas itself, where one rule holds on every
+write, whoever made it — Claude over MCP, the editor, the REST API:
 
-- **No element is placed at x/y outside a `frame`.** Whoever writes a tree is
-  guessing how tall the thing above it came out, and guessed coordinates pile the
-  screen into a heap. A tree written that way is not rejected; it is settled back
-  into the stack it was written in, in the order it was written, and the caller is
-  told so it stops doing it.
-- **No two artboards overlap.** Giving a screen a bigger frame — a new device, a
-  drag on the resize handle — used to bury the screen laid out beside it, because
-  the grid was measured before the frame grew. Now the neighbours are pushed clear,
-  in walkthrough order, and artboards a person has dragged are treated as fixed.
+**No two artboards overlap.** Giving a screen a bigger frame — a new device, a drag
+on the resize handle — used to bury the screen laid out beside it, because the grid
+was measured before the frame grew. Now the neighbours are pushed clear, in
+walkthrough order, and artboards a person has dragged are treated as fixed.
 
-Both are repaired on read too, so a file written before this holds still opens
-clean.
+Nothing dangerous survives a write either. Scripts, event handlers, `javascript:`
+URLs and remote images are stripped, and what went is reported back — so a model
+finds out on the first screen rather than the twentieth. A remote image keeps its URL
+on `data-src`: a design that fetches from the internet is not one you can open in
+front of a client on a bad connection.
+
+Both are repaired on read too, so a file written before this holds still opens clean.
 
 #### It reaches the implementation
 
-`read_implementation_spec` returns the design system and, under every screen, the
-layout it was designed with:
+`read_implementation_spec` returns the design system, then — under every screen — the
+contract at a glance and the markup itself:
 
 ```
 ### 🖥 Sign in
@@ -331,13 +359,15 @@ Route: `/login`
 
 **Design — Sign in** · desktop 1440×900 · `/login`
 
-- stack Centre (column, gap 20, pad 120/420)
-  - heading "Welcome back" [heading.lg]
-  - form (column, gap 16)
-      does → POST /api/session
-    - input "Email" *required
-      value ← state.email
-    - button "Sign in" [primary]
+**Approved.** Build this exactly: these elements, this nesting, this wording.
+
+- main.screen
+  - h1 "Welcome back"
+  - form.col
+    - label "Email"
+      - input[email] "you@example.com" *required
+        value ← state.email
+    - button.btn.primary "Sign in"
       does → POST /api/session
       goes → Products
 
@@ -345,9 +375,9 @@ Route: `/login`
 - **Error** (the password is wrong) — A red line above the form.
 ```
 
-No generated markup: Claude writes the component in your project's own stack. What
-it gets from here is the contract — the elements in that order, the real words, what
-each field is bound to and what each button does.
+The markup goes with it, and is the thing to build from. Claude still writes the
+component in your project's own stack — React, SwiftUI, whatever it is — but it is
+translating a real page rather than reconstructing one from a description of it.
 
 The strip along the bottom of the tab counts the holes worth chasing: screens with
 no design, buttons that neither call anything nor go anywhere, fields with nowhere
@@ -549,7 +579,7 @@ dgp install-mcp         Register the MCP server with your AI tools
 **Creating** `create_diagram` · `create_diagram_from_outline`
 **Editing** `add_blocks` · `update_block` · `delete_blocks` · `add_edges` · `update_edge` · `delete_edges` · `apply_batch` · `move_blocks` · `auto_layout` · `update_diagram_meta` · `delete_diagram`
 **Client view** `read_client_view` · `update_client_view` · `sync_client_view` · `apply_client_view`
-**Screen designs** `read_screen_design` · `design_screen` · `update_screen_design` · `set_design_system` · `sync_screen_designs` · `arrange_screen_designs` · `design_progress`
+**Screen designs** `read_screen_design` · `design_screen` · `update_screen_design` · `set_design_system` · `set_design_css` · `sync_screen_designs` · `arrange_screen_designs` · `design_progress`
 **Building** `set_diagram_status` · `mark_block_implemented` · `implementation_progress` · `open_editor`
 **Sharing** `import_diagram`
 

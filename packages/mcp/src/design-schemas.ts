@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { ELEMENT_TYPES } from '@diagram-plus/core';
 
 /**
  * Argument schemas for the screen-design tools.
@@ -28,8 +27,6 @@ export const elementRef = z
     'Element to act on: its data-el id, the exact words on it, or its tag when the screen has ' +
       'only one.',
   );
-
-export const elementTypeEnum = z.enum(ELEMENT_TYPES);
 
 export const deviceEnum = z
   .enum(['mobile', 'tablet', 'desktop', 'wide', 'custom'])

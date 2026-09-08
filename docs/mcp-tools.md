@@ -1,21 +1,25 @@
 # MCP tools
 
-The diagram-plus MCP server exposes 39 tools, 1 resource and 2 prompts. Every tool
+The diagram-plus MCP server exposes 40 tools, 1 resource and 2 prompts. Every tool
 that targets a diagram takes `diagram` — its slug, its id, or its exact name.
 
-Tool descriptions carry the block payload fields and the design element vocabulary
-inline, so Claude knows what it can fill in without a round trip. When in doubt it
-should call `describe_block_schema` or `describe_design_schema`.
+Tool descriptions carry the block payload fields and the design vocabulary inline, so
+Claude knows what it can fill in without a round trip. When in doubt it should call
+`describe_block_schema` or `describe_design_schema`.
 
 ---
 
 ## Discovery
 
 ### `describe_design_schema`
-Every element a screen can hold, the properties each one uses, its defaults, and the
-full layout and style vocabulary. Optionally narrowed to one `elementType`. It also
-returns the house rules and a worked example, which between them are worth more than
-any amount of prose about how to draw a screen.
+How a screen is written here. A screen is plain HTML, so there is no element catalog
+to learn — what this returns is the part HTML does not say on its own: the `data-*`
+attributes that carry the wiring, the CSS variables and classes available to style
+against, and what gets stripped on the way in. Pass a `diagram` to get that project's
+own tokens rather than the defaults.
+
+It also returns the house rules and a worked example, which between them are worth
+more than any amount of prose about how to draw a screen.
 
 ### `describe_block_schema`
 Lists every block type and connection type with the exact fields each payload
@@ -241,17 +245,32 @@ The order that works:
 
 The house rules, which the tool descriptions repeat:
 
-- Nest stacks; never set `x`/`y` or `absolute`. Nobody writing a tree knows how tall
-  a heading renders, so guessed coordinates land elements on top of each other —
-  and a screen of overlapping text is the one thing that cannot be shown to a
-  client. Outside a `frame` they are dropped and the element is settled back into
-  the flow of its container, which the tool tells you it did.
-- Refer to tokens (`accent`, `heading.lg`, radius `md`), not to raw hex.
-- Write the real words. A screen full of "Button" is not a design anyone can build.
-- Every button either `action`s or `navigatesTo`. One with neither is a hole.
-- Every field says where its value lives: `binding: "state.email"`.
-- Draw one row inside a `list` and set what it repeats over. Never paste it out five
-  times.
+- Write real HTML with semantic tags — `header`, `nav`, `form`, `label`, `table`,
+  `button`, `dialog`. The browser lays it out, so nothing needs positioning and
+  nothing can overlap.
+- Style with the stylesheet's classes and the CSS variables — `var(--color-accent)`,
+  `var(--radius-md)`, `var(--space)`. Never a raw hex value, or the tokens panel
+  stops working.
+- Write the real words, and real-looking data. These get shown to a client:
+  "Aisha Rahman · 14 Mar 1988" sells it, "Lorem ipsum" and "Row 1" do not.
+- Every button and link either `data-action`s or `data-navigates-to`s. One with
+  neither is a hole.
+- Every field says where its value lives: `data-binding="state.email"`.
+- Draw one row and set `data-repeat` on what holds it. Never paste it out six times.
+- No `<script>`, no inline handlers, no remote images — they are stripped on the way
+  in. Use inline `<svg>` or a CSS gradient, and describe photographs in `alt`.
+
+The attributes that carry the contract, since HTML has no opinion on them:
+
+| Attribute | What it says |
+|---|---|
+| `data-binding` | Where the value comes from: `state.email`, `Order.total` |
+| `data-action` | What using it does — name the endpoint or service block |
+| `data-navigates-to` | The `ui_screen` it opens, by name or block id |
+| `data-repeat` / `data-repeat-count` | The model this is drawn once per, and how many to show |
+| `data-component` | For an instance of a `ui_component` block: that block's id |
+| `data-visible-when` | Only drawn when this holds |
+| `data-el` | The editor's handle. Minted for you — never write one |
 
 ### `read_screen_design`
 What the screens look like: every element, its words, where its value comes from and
@@ -261,56 +280,64 @@ what the screen is for, this says what to build.
 | Argument | What it does |
 |---|---|
 | `screen` | Just one screen. Omit for the design system and all of them |
-| `json` | Return the raw element tree as well, for editing it precisely |
+| `json` | Return the raw markup as well, for editing it precisely |
 
 A project that has never been designed gets a document derived from the diagram
 without anything being written, so reading never creates a file.
 
 ### `design_screen`
-Draw a screen: its whole layout as one nested element tree. This is the main tool —
-write the screen in one call rather than adding elements one at a time.
+Draw a screen: write it as HTML. This is the main tool — write the whole screen in one
+call rather than making thirty small edits.
 
 ```jsonc
 {
   "diagram": "recipe-box",
   "screen": "Sign in",
-  "root": {
-    "type": "stack",
-    "layout": { "direction": "column", "gap": 24, "padding": { "top": 32, "left": 32 } },
-    "children": [
-      { "type": "heading", "text": "Welcome back", "style": { "text": "heading.lg" } },
-      { "type": "form", "action": "POST /api/session", "children": [
-        { "type": "input", "label": "Email", "binding": "state.email", "required": true },
-        { "type": "button", "text": "Sign in", "variant": "primary",
-          "action": "POST /api/session", "navigatesTo": "Products" }
-      ] }
-    ]
-  },
+  "html": "<main class=\"screen\">\n  <h1 class=\"text-heading-lg\">Welcome back</h1>\n  <form class=\"col\">\n    <label>Email<input type=\"email\" placeholder=\"you@example.com\" data-binding=\"state.email\" required></label>\n    <button class=\"btn primary\" data-action=\"POST /api/session\" data-navigates-to=\"Products\">Sign in</button>\n  </form>\n</main>",
   "states": [
     { "name": "Error", "when": "the password is wrong", "changes": "A red line above the form." }
   ]
 }
 ```
 
-Ids are minted for you, and anything left out takes that element type's default — so
-a button needs only its text and what it does. `variant` designs a second artboard
-for the same screen ("Empty", "Error", "Signed out").
+A `data-el` id is minted for every element, so you never write one. `css` adds styling
+for this screen alone — leave it out unless the screen genuinely needs something of
+its own, since rules that belong to every screen go in the shared stylesheet.
+`variant` designs a second artboard for the same screen ("Empty", "Error", "Signed
+out").
+
+Anything stripped on the way in — a script, an event handler, a remote image — is
+reported in the reply, so a mistake is caught on the first screen rather than the
+twentieth.
 
 `states` are for what is not worth its own artboard: what changes while it loads,
 when there is nothing to show, when it fails. They reach the implementation spec as
 words, which for most of them is all they ever needed.
 
 ### `update_screen_design`
-Precise changes rather than a whole screen: add or retype one element, rebind a
-field, move something into a different container, reorder the screens. Takes a list
-of operations in the same vocabulary the editor uses, applied in order.
+Precise changes rather than a whole screen: rebind a field, retitle something, insert
+markup, move an element, add an artboard for the empty state, reorder the screens.
+Takes a list of operations in the same vocabulary the editor uses, applied in order.
 
 `add_screen` · `update_screen` · `remove_screen` · `duplicate_screen` ·
-`move_screen` · `reorder_screens` · `set_tree` · `add_element` · `update_element` ·
-`remove_element` · `duplicate_element` · `move_element` · `set_system` · `set_notes`
+`move_screen` · `reorder_screens` · `set_html` · `set_css` · `insert_html` ·
+`set_attribute` · `set_text` · `move_node` · `remove_node` · `duplicate_node` ·
+`set_system` · `set_notes`
+
+Elements are named by their `data-el` id, by the exact words on them, or by tag when
+the screen has only one.
 
 Operations that fail are reported alongside the ones that worked, so a batch of
 twenty edits is not lost to one bad reference.
+
+### `set_design_css`
+The stylesheet every screen is drawn against, on top of the tokens. This is where a
+button, a card or a table gets its look — once, for the whole project, so twenty
+screens come out looking like one product and the implementer receives one stylesheet
+rather than twenty variations on it.
+
+A sensible default is already in place. Write yours against the tokens —
+`var(--color-accent)`, not `#2563eb` — or changing a token stops restyling anything.
 
 ### `set_design_system`
 The tokens every screen is drawn against. Do this first. Each list you pass replaces

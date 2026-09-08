@@ -1,16 +1,11 @@
-import { ELEMENT_CATALOG } from './design-catalog.js';
 import {
   DESIGN_FORMAT_VERSION,
   DesignDocumentSchema,
-  DesignElementSchema,
   DEVICE_FRAMES,
   ScreenDesignSchema,
   type DesignDocument,
-  type DesignElement,
-  type DesignElementInput,
   type DesignSystem,
   type Device,
-  type ElementType,
   type ScreenDesign,
 } from './design.js';
 import { normalizeHtml } from './design-html.js';
@@ -19,10 +14,10 @@ import { newId, nowIso } from './ids.js';
 /**
  * Building the parts of a design document.
  *
- * Every element that reaches the tree comes through `createElement`, so a box
- * dragged off the palette and a box written by Claude start life identical —
- * the same defaults, the same tokens, the same shape. That is what stops the
- * editor and the MCP server drifting into two dialects of the same format.
+ * The tokens a project starts with, the stylesheet they compile to, and the
+ * empty screen a new artboard begins as. Markup itself is built by whoever is
+ * writing it — that is rather the point — so what is left here is the frame
+ * around it.
  */
 
 /* ------------------------------------------------------------------ *
@@ -83,61 +78,6 @@ export const DEFAULT_DESIGN_SYSTEM: DesignSystem = {
   ],
   notes: '',
 };
-
-/* ------------------------------------------------------------------ *
- * Elements
- * ------------------------------------------------------------------ */
-
-/** Deep-merge a patch over a defaults object, one level into nested objects. */
-function mergeInput(
-  base: Omit<DesignElementInput, 'id'>,
-  patch: Partial<DesignElementInput>,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined) continue;
-    const existing = out[key];
-    const bothPlainObjects =
-      value !== null &&
-      typeof value === 'object' &&
-      !Array.isArray(value) &&
-      existing !== null &&
-      typeof existing === 'object' &&
-      !Array.isArray(existing);
-    out[key] = bothPlainObjects
-      ? { ...(existing as object), ...(value as object) }
-      : value;
-  }
-  return out;
-}
-
-/**
- * A new element of a type, with the catalog's defaults filled in.
- *
- * The patch wins over the defaults, and `layout`/`style` merge rather than
- * replace — so asking for a red button does not also throw away its padding.
- */
-export function createElement(
-  type: ElementType,
-  patch: Partial<DesignElementInput> = {},
-): DesignElement {
-  const info = ELEMENT_CATALOG[type];
-  const merged = mergeInput(info.defaults, patch);
-  return DesignElementSchema.parse({
-    ...merged,
-    id: (patch.id as string | undefined) ?? newId('els'),
-    type,
-  } as DesignElementInput);
-}
-
-/** Give every element in a tree a fresh id — for duplicating a subtree. */
-export function reidentify(element: DesignElement): DesignElement {
-  return {
-    ...element,
-    id: newId('els'),
-    children: element.children.map(reidentify),
-  };
-}
 
 /* ------------------------------------------------------------------ *
  * Screens

@@ -5,7 +5,6 @@ import {
   DesignStore,
   DiagramNotFoundError,
   DiagramStore,
-  ELEMENT_CATEGORIES,
   EDGE_TYPE_INFO,
   EDGE_TYPES,
   RevisionConflictError,
@@ -21,7 +20,6 @@ import {
   designProgress,
   diffDesign,
   editDesign,
-  elementCatalogList,
   diagramStats,
   diffClientView,
   exportDiagram,
@@ -115,8 +113,6 @@ export function createApiRouter(options: ApiOptions): Router {
     colors: Object.fromEntries(
       Object.entries(BLOCK_CATALOG).map(([type, info]) => [type, info.color]),
     ),
-    elementTypes: elementCatalogList(),
-    elementCategories: ELEMENT_CATEGORIES,
   }));
 
   /* ---- diagrams ---------------------------------------------------- */

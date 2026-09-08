@@ -83,13 +83,16 @@ afterAll(async () => {
 });
 
 describe('the design routes', () => {
-  it('offers the design palette alongside the block catalog', async () => {
-    const { body } = await call<{ elementTypes: unknown[]; elementCategories: unknown[] }>(
+  it('gives every new design a stylesheet built on its tokens', async () => {
+    // The palette used to be served from here as a list of element types. A
+    // screen is markup now, so what a design needs from the server is the
+    // stylesheet its markup is written against.
+    const { body } = await call<{ design: { css: string; system: { colors: unknown[] } } }>(
       'GET',
-      '/api/catalog',
+      '/api/diagrams/shop/design',
     );
-    expect(body.elementTypes.length).toBeGreaterThan(20);
-    expect(body.elementCategories).toHaveLength(4);
+    expect(body.design.css).toContain('var(--color-accent)');
+    expect(body.design.system.colors.length).toBeGreaterThan(0);
   });
 
   it('derives designs on read without writing a file', async () => {

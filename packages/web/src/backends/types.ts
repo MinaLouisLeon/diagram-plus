@@ -10,8 +10,6 @@ import type {
   Diagram,
   DiagramSummary,
   EdgeTypeInfo,
-  ElementCategory,
-  ElementTypeInfo,
   ValidationResult,
 } from '@diagram-plus/core/browser';
 
@@ -30,9 +28,6 @@ export interface Catalog {
   categories: { id: BlockCategory; label: string }[];
   edgeTypes: EdgeTypeInfo[];
   colors: Record<string, string>;
-  /** The design palette. Optional so an older server still starts the editor. */
-  elementTypes?: ElementTypeInfo[];
-  elementCategories?: { id: ElementCategory; label: string }[];
 }
 
 /** What comes back from any of the design endpoints. */
