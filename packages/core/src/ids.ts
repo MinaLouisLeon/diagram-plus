@@ -15,7 +15,7 @@ function randomSuffix(length = 6): string {
   return out;
 }
 
-export type IdPrefix = 'dgm' | 'blk' | 'edg' | 'grp' | 'cvn' | 'cve';
+export type IdPrefix = 'dgm' | 'blk' | 'edg' | 'grp' | 'cvn' | 'cve' | 'scr' | 'els';
 
 export function newId(prefix: IdPrefix): string {
   return `${prefix}_${randomSuffix(8)}`;

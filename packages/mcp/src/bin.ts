@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { DiagramStore, findProjectRoot } from '@diagram-plus/core';
+import { DesignStore, DiagramStore, NodeDiagramFs, findProjectRoot } from '@diagram-plus/core';
 import { createMcpServer, DEFAULT_EDITOR_PORT } from './server.js';
 
 /**
@@ -12,13 +12,16 @@ export async function runStdioServer(): Promise<void> {
     ? process.env['DIAGRAM_PLUS_ROOT']
     : await findProjectRoot(process.cwd());
 
+  // One filesystem, two stores: the graph and the screen designs beside it.
+  const fs = new NodeDiagramFs({ root });
   const store = new DiagramStore({ root });
+  const designs = new DesignStore(fs);
   await store.ensureDir();
 
   const port = process.env['DIAGRAM_PLUS_PORT'] ?? String(DEFAULT_EDITOR_PORT);
   const editorUrl = process.env['DIAGRAM_PLUS_URL'] ?? `http://localhost:${port}`;
 
-  const server = createMcpServer({ store, editorUrl });
+  const server = createMcpServer({ store, designs, editorUrl });
   const transport = new StdioServerTransport();
   await server.connect(transport);
 

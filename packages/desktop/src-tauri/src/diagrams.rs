@@ -13,6 +13,25 @@ use crate::project::Project;
 
 pub const DIAGRAM_DIR: &str = ".diagrams";
 pub const DIAGRAM_EXT: &str = ".diagram.json";
+pub const DESIGN_EXT: &str = ".design.json";
+
+/// The two documents a slug can name: the graph, and the screen designs drawn
+/// from it. They share a directory and a slug, so every command here takes the
+/// kind alongside it and the TypeScript side says which one it wants.
+pub const DOCUMENT_EXTS: [&str; 2] = [DIAGRAM_EXT, DESIGN_EXT];
+
+/// Resolve a kind to its extension, rejecting anything not on the list.
+///
+/// The kind arrives from the webview exactly as the slug does, so it is
+/// matched against a fixed set rather than interpolated into a filename —
+/// there is no way through here to a path outside the two documents we own.
+fn extension(kind: Option<&str>) -> Result<&'static str, String> {
+    match kind.unwrap_or("diagram") {
+        "diagram" => Ok(DIAGRAM_EXT),
+        "design" => Ok(DESIGN_EXT),
+        other => Err(format!("\"{other}\" is not a kind of document.")),
+    }
+}
 
 fn dir(project: &Project) -> Result<PathBuf, String> {
     project
@@ -25,7 +44,7 @@ fn dir(project: &Project) -> Result<PathBuf, String> {
 /// The slug arrives from the webview, so this is the boundary that keeps a
 /// crafted name from escaping `.diagrams/` — no separators, no `..`, no drive
 /// letters, and nothing but the characters `slugify` can actually produce.
-fn diagram_file(project: &Project, slug: &str) -> Result<PathBuf, String> {
+fn diagram_file(project: &Project, slug: &str, kind: Option<&str>) -> Result<PathBuf, String> {
     if slug.is_empty() || slug.len() > 96 {
         return Err(format!("\"{slug}\" is not a valid diagram name."));
     }
@@ -35,7 +54,8 @@ fn diagram_file(project: &Project, slug: &str) -> Result<PathBuf, String> {
     {
         return Err(format!("\"{slug}\" is not a valid diagram name."));
     }
-    Ok(dir(project)?.join(format!("{slug}{DIAGRAM_EXT}")))
+    let ext = extension(kind)?;
+    Ok(dir(project)?.join(format!("{slug}{ext}")))
 }
 
 #[tauri::command]
@@ -45,7 +65,11 @@ pub fn diagrams_ensure_dir(project: State<Project>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn diagrams_list_slugs(project: State<Project>) -> Result<Vec<String>, String> {
+pub fn diagrams_list_slugs(
+    project: State<Project>,
+    kind: Option<String>,
+) -> Result<Vec<String>, String> {
+    let ext = extension(kind.as_deref())?;
     let dir = dir(&project)?;
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
@@ -57,8 +81,14 @@ pub fn diagrams_list_slugs(project: State<Project>) -> Result<Vec<String>, Strin
     let mut slugs = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if let Some(slug) = name.strip_suffix(DIAGRAM_EXT) {
-            if !slug.is_empty() {
+        if let Some(slug) = name.strip_suffix(ext) {
+            // A slug ending in one of the other kinds' extensions would match
+            // both, so the longest matching suffix decides what the file is.
+            let longest = DOCUMENT_EXTS
+                .iter()
+                .filter(|candidate| name.ends_with(*candidate))
+                .max_by_key(|candidate| candidate.len());
+            if !slug.is_empty() && longest == Some(&ext) {
                 slugs.push(slug.to_string());
             }
         }
@@ -68,8 +98,12 @@ pub fn diagrams_list_slugs(project: State<Project>) -> Result<Vec<String>, Strin
 }
 
 #[tauri::command]
-pub fn diagrams_read(project: State<Project>, slug: String) -> Result<Option<String>, String> {
-    let file = diagram_file(&project, &slug)?;
+pub fn diagrams_read(
+    project: State<Project>,
+    slug: String,
+    kind: Option<String>,
+) -> Result<Option<String>, String> {
+    let file = diagram_file(&project, &slug, kind.as_deref())?;
     match fs::read_to_string(&file) {
         Ok(text) => Ok(Some(text)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -84,8 +118,9 @@ pub fn diagrams_write(
     project: State<Project>,
     slug: String,
     contents: String,
+    kind: Option<String>,
 ) -> Result<(), String> {
-    let file = diagram_file(&project, &slug)?;
+    let file = diagram_file(&project, &slug, kind.as_deref())?;
     if let Some(parent) = file.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("Could not create {}: {err}", parent.display()))?;
@@ -101,8 +136,12 @@ pub fn diagrams_write(
 }
 
 #[tauri::command]
-pub fn diagrams_remove(project: State<Project>, slug: String) -> Result<(), String> {
-    let file = diagram_file(&project, &slug)?;
+pub fn diagrams_remove(
+    project: State<Project>,
+    slug: String,
+    kind: Option<String>,
+) -> Result<(), String> {
+    let file = diagram_file(&project, &slug, kind.as_deref())?;
     match fs::remove_file(&file) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),

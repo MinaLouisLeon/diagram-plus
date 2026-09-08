@@ -1,24 +1,37 @@
 import {
   BLOCK_CATALOG,
   BLOCK_CATEGORIES,
-  DIAGRAM_EXT,
+  DOCUMENT_EXT,
+  DesignNotFoundError,
+  DesignStore,
   DiagramNotFoundError,
   DiagramStore,
   EDGE_TYPES,
   EDGE_TYPE_INFO,
+  ELEMENT_CATEGORIES,
   RevisionConflictError,
   applyBatch,
   assignDiagramContent,
   autoLayout,
   catalogList,
+  designProgress,
+  diffDesign,
+  editDesign,
+  elementCatalogList,
   exportDiagram,
   generateSpec,
   importDiagram,
+  layoutDesign,
+  reconcileDesign,
+  safeParseDesign,
   safeParseDiagram,
   validateDiagram,
   type BatchOperation,
+  type DesignDocument,
+  type DesignOperation,
   type Diagram,
   type DiagramFs,
+  type DocumentKind,
 } from '@diagram-plus/core/browser';
 import { invoke, listen, project } from '../desktop';
 import {
@@ -60,9 +73,10 @@ class TauriDiagramFs implements DiagramFs {
     if (!project.getState().root) throw new NoProjectError();
   }
 
-  fileForSlug(slug: string): string {
+  fileForSlug(slug: string, kind: DocumentKind = 'diagram'): string {
     const { dir, sep } = project.getState();
-    return dir ? `${dir}${sep}${slug}${DIAGRAM_EXT}` : `${slug}${DIAGRAM_EXT}`;
+    const name = `${slug}${DOCUMENT_EXT[kind]}`;
+    return dir ? `${dir}${sep}${name}` : name;
   }
 
   async ensureDir(): Promise<void> {
@@ -70,28 +84,32 @@ class TauriDiagramFs implements DiagramFs {
     await invoke('diagrams_ensure_dir');
   }
 
-  async listSlugs(): Promise<string[]> {
+  async listSlugs(kind: DocumentKind = 'diagram'): Promise<string[]> {
     if (!project.getState().root) return [];
-    return invoke<string[]>('diagrams_list_slugs');
+    return invoke<string[]>('diagrams_list_slugs', { kind });
   }
 
-  async read(slug: string): Promise<string | null> {
+  async read(slug: string, kind: DocumentKind = 'diagram'): Promise<string | null> {
     this.requireProject();
-    return invoke<string | null>('diagrams_read', { slug });
+    return invoke<string | null>('diagrams_read', { slug, kind });
   }
 
-  async write(slug: string, contents: string): Promise<void> {
+  async write(slug: string, contents: string, kind: DocumentKind = 'diagram'): Promise<void> {
     this.requireProject();
-    await invoke('diagrams_write', { slug, contents });
+    await invoke('diagrams_write', { slug, contents, kind });
   }
 
-  async remove(slug: string): Promise<void> {
+  async remove(slug: string, kind: DocumentKind = 'diagram'): Promise<void> {
     this.requireProject();
-    await invoke('diagrams_remove', { slug });
+    await invoke('diagrams_remove', { slug, kind });
   }
 }
 
-const store = new DiagramStore(new TauriDiagramFs());
+// One filesystem, two stores — the same pairing the server makes, so the
+// desktop app and the browser behave identically down to the write queue.
+const projectFs = new TauriDiagramFs();
+const store = new DiagramStore(projectFs);
+const designs = new DesignStore(projectFs);
 
 /**
  * Translate store failures into the status codes the editor already handles —
@@ -101,6 +119,7 @@ const store = new DiagramStore(new TauriDiagramFs());
 function rethrow(err: unknown): never {
   if (err instanceof ApiError) throw err;
   if (err instanceof DiagramNotFoundError) throw new ApiError(404, err.message);
+  if (err instanceof DesignNotFoundError) throw new ApiError(404, err.message);
   if (err instanceof RevisionConflictError) throw new ApiError(409, err.message);
   throw new ApiError(500, err instanceof Error ? err.message : String(err));
 }
@@ -132,6 +151,8 @@ const api: Api = {
       colors: Object.fromEntries(
         Object.entries(BLOCK_CATALOG).map(([type, info]) => [type, info.color]),
       ),
+      elementTypes: elementCatalogList(),
+      elementCategories: ELEMENT_CATEGORIES,
     };
   },
 
@@ -247,7 +268,9 @@ const api: Api = {
   },
 
   async spec(slug) {
-    return { markdown: generateSpec(await read(slug), { includeDiagram: true }) };
+    const diagram = await read(slug);
+    const design = await designs.find(diagram.slug).catch(() => null);
+    return { markdown: generateSpec(diagram, { includeDiagram: true, design }) };
   },
 
   async validate(slug) {
@@ -257,7 +280,98 @@ const api: Api = {
   async export(slug, format) {
     return { format, content: exportDiagram(await read(slug), format) };
   },
+
+  /* ---- the screen designs ------------------------------------------- */
+
+  async getDesign(slug) {
+    const diagram = await read(slug);
+    try {
+      const design = await designs.ensure(diagram);
+      return {
+        design,
+        changes: diffDesign(diagram, design),
+        progress: designProgress(diagram, design),
+        saved: await designs.exists(diagram.slug),
+      };
+    } catch (err) {
+      return rethrow(err);
+    }
+  },
+
+  async replaceDesign(slug, incoming) {
+    const parsed = safeParseDesign(incoming);
+    if (!parsed.success) {
+      throw new ApiError(
+        400,
+        `That is not a design document: ${parsed.error.issues[0]?.message ?? 'unknown error'}`,
+      );
+    }
+    const next = parsed.data;
+    return writeDesign(slug, (draft) => {
+      // Identity stays with the file, never with the payload.
+      Object.assign(draft, next, {
+        slug: draft.slug,
+        diagramId: draft.diagramId,
+        revision: draft.revision,
+        createdAt: draft.createdAt,
+      });
+    });
+  },
+
+  async designOps(slug, operations: DesignOperation[], layout = false) {
+    let outcome: { applied: number; errors: unknown[] } = { applied: 0, errors: [] };
+    const result = await writeDesign(slug, (draft) => {
+      const edit = editDesign(draft, operations);
+      outcome = { applied: edit.applied, errors: edit.errors };
+      Object.assign(draft, edit.document);
+      if (layout) Object.assign(draft, layoutDesign(draft));
+    });
+    return { ...result, result: outcome };
+  },
+
+  async syncDesign(slug, rebuild = false) {
+    let report = { added: [] as string[], updated: [] as string[], orphaned: [] as string[] };
+    const diagram = await read(slug);
+    const result = await writeDesign(
+      slug,
+      (draft) => {
+        const base = rebuild ? { ...draft, screens: [] } : draft;
+        const reconciled = reconcileDesign(diagram, base);
+        report = {
+          added: reconciled.added,
+          updated: reconciled.updated,
+          orphaned: reconciled.orphaned,
+        };
+        Object.assign(draft, reconciled.document);
+      },
+      // Start from the file, so a reconcile can report what it seeded.
+      { seed: false },
+    );
+    return { ...result, report };
+  },
+
+  async arrangeDesign(slug, includePinned = false) {
+    return writeDesign(slug, (draft) => {
+      Object.assign(draft, layoutDesign(draft, { includePinned }));
+    });
+  },
 };
+
+/** Read, mutate, write for the design file — the twin of `write` above. */
+async function writeDesign(
+  slug: string,
+  mutator: (draft: DesignDocument) => void,
+  options: { seed?: boolean } = {},
+): Promise<{ design: DesignDocument; changes: ReturnType<typeof diffDesign> }> {
+  const diagram = await read(slug);
+  try {
+    const { document } = await designs.update(diagram, mutator, options);
+    designChanged(document, 'api');
+    return { design: document, changes: diffDesign(diagram, document) };
+  } catch (err) {
+    return rethrow(err);
+  }
+}
 
 async function applyMeta(slug: string, body: Record<string, unknown>): Promise<Diagram> {
   return write(slug, (draft) => {
@@ -309,10 +423,25 @@ function deleted(slug: string): void {
   emit({ type: 'diagram:deleted', slug });
 }
 
+function designChanged(design: DesignDocument, source: string): void {
+  emit({
+    type: 'design:changed',
+    slug: design.slug,
+    revision: design.revision,
+    source,
+    design,
+  });
+}
+
 /** A file changed underneath us — most likely Claude, via the MCP server. */
 async function onFileChanged(slug: string): Promise<void> {
   const diagram = await store.readBySlug(slug).catch(() => null);
   if (diagram) changed(diagram, 'external');
+}
+
+async function onDesignFileChanged(slug: string): Promise<void> {
+  const design = await designs.find(slug).catch(() => null);
+  if (design) designChanged(design, 'external');
 }
 
 function connectLive(
@@ -331,6 +460,12 @@ function connectLive(
 
   track(listen('diagram-changed', (payload) => void onFileChanged(String(payload))));
   track(listen('diagram-removed', (payload) => deleted(String(payload))));
+  track(listen('design-changed', (payload) => void onDesignFileChanged(String(payload))));
+  track(
+    listen('design-removed', (payload) =>
+      emit({ type: 'design:deleted', slug: String(payload) }),
+    ),
+  );
 
   // Re-announce the list whenever the project changes, the way the server's
   // `hello` frame does for a newly connected tab.

@@ -27,6 +27,7 @@
                                                           ▼           │ HTTP+WS
                                         ┌──────────────────────────┐  │
                                         │  .diagrams/*.diagram.json│◄─┤
+                                        │  .diagrams/*.design.json │  │
                                         │  (single source of truth)│  │
                                         └──────────────────────────┘  │
                                                           ▲           │
@@ -45,7 +46,7 @@ edits the diagram.
 
 | Package | Purpose |
 |---|---|
-| `@diagram-plus/core` | Diagram schema (zod), typed block catalog, validation, file store, layout, spec generator, project tree, exporters |
+| `@diagram-plus/core` | Diagram schema (zod), typed block catalog, validation, file store, layout, spec generator, project tree, exporters, the screen-design model |
 | `@diagram-plus/server` | Local HTTP REST + WebSocket server, file watcher, static hosting, `dgp` CLI |
 | `@diagram-plus/mcp` | stdio MCP server exposing the diagram as tools/resources/prompts |
 | `@diagram-plus/web` | React + xyflow drag-and-drop editor |
@@ -173,6 +174,51 @@ and worth nothing if those changes cannot reach the design.
 - [x] Four MCP tools — `read_client_view`, `update_client_view`, `sync_client_view`,
       `apply_client_view` — and the REST routes behind them
 
+### Phase 11 — What the screens look like
+
+A diagram says a screen exists and what it is for. It does not say what it looks
+like, so the implementer invents the interface as they go — or waits on a mock-up
+in somebody else's tool that goes stale the day it is drawn.
+
+- [x] `core/design.ts` — the design document: a typed layout tree (36 element kinds
+      from `stack` to `toggle`), sizes as `fill`/`hug`/pixels rather than CSS, and
+      colour, type, radius and shadow **tokens** so a screen says `accent` and
+      `heading.lg` rather than `#2563eb` and `28px`
+- [x] `core/design-catalog.ts` — what each element *means*: which of the thirty-odd
+      properties actually apply to a checkbox, and what a sensible new one looks
+      like. The palette, the inspector and `describe_design_schema` all read it
+- [x] `core/design-sync.ts` — a screen's design **starts as a reading of its block**:
+      a header with its name, a control per piece of state (already bound), a button
+      per action (already pointing at the endpoint the diagram says it calls). A
+      wireframe of the right thing with every hook wired, so the first real design
+      decision is the first thing anyone has to make
+- [x] Reconcile, diff and progress: new blocks get a design, drawn screens keep
+      their wording, a screen whose block has gone is flagged rather than destroyed
+- [x] `core/design-ops.ts` — one operation vocabulary for the canvas, the REST API
+      and the MCP tools, so a button dragged into place and a button written by
+      Claude are the same change by different roads
+- [x] Its own file — `.diagrams/<slug>.design.json` — with its own revision and
+      conflict check, carried across a rename and deleted with the diagram. A screen
+      tree dwarfs the graph it belongs to; burying one in the other would make every
+      diagram diff unreadable
+- [x] A **Design** tab: artboards on a pan/zoom canvas, a layers tree, drag to
+      reorder and to re-parent, drag from a palette, resize frames, double-click to
+      zoom to a screen, and a properties panel that shows only what the selected
+      element actually uses
+- [x] The tokens as an editable panel — changing one restyles every artboard at once
+- [x] A strip along the bottom counting the holes worth chasing: screens with no
+      design, buttons that neither call anything nor go anywhere, fields with no
+      binding
+- [x] **The designs reach the build**: `read_implementation_spec` returns the design
+      system and, under every screen, its full layout — every element, its words,
+      its binding and its action. No generated markup; the implementer writes the
+      component in the project's own stack
+- [x] Eight MCP tools — `describe_design_schema`, `read_screen_design`,
+      `design_screen`, `update_screen_design`, `set_design_system`,
+      `sync_screen_designs`, `arrange_screen_designs`, `design_progress` — the REST
+      routes behind them, live updates over the WebSocket, and the Tauri commands so
+      the desktop app holds both files too
+
 ---
 
 ## Progress
@@ -190,10 +236,23 @@ and worth nothing if those changes cannot reach the design.
 | 8 — Sharing | ✅ done | `core/transfer.ts`, import dialog, `dgp import`, `import_diagram` |
 | 9 — Explaining | ✅ done | `core/tree.ts`, `core/tree-render.ts`, Present mode, `read_project_tree` |
 | 10 — The client edits it back | ✅ done | `core/fold.ts`, `core/client-view.ts`, `core/client-sync.ts`, the client canvas, four `*_client_view` tools |
+| 11 — What the screens look like | ✅ done | `core/design*.ts`, `.design.json` beside the diagram, the Design tab, eight design tools, designs folded into the spec |
 
-**Everything in this roadmap is built.** `npm test` runs 220 tests across the three
+**Everything in this roadmap is built.** `npm test` runs 276 tests across the three
 non-UI packages, including an end-to-end pass over the whole loop, the export/import
-round trip and the client-view round trip in both directions; the editor was driven
-in a real browser to confirm the canvas, the inspector, live sync, the progress
-panel, the import dialog and the client view — including editing it and applying
-those edits to the diagram — all work.
+round trip, the client-view round trip in both directions, and the design round trip
+from seeding through drawing to the implementation spec; the editor was driven in a
+real browser to confirm the canvas, the inspector, live sync, the progress panel,
+the import dialog, the client view and the design tab — including watching a screen
+drawn through the API appear on the canvas without a reload.
+
+### Not yet
+
+- **Designs do not travel in an exported bundle.** A single diagram exports as the
+  bytes in `.diagrams/`, and the designs are a second file — so a diagram sent to
+  someone outside the repository arrives without them. Fixing it means teaching
+  `core/transfer.ts` about a pair of documents rather than one.
+- **The Rust side is unverified on this machine.** The Tauri commands and the file
+  watcher were extended for the second document, but `cargo check` cannot run here:
+  the build script's resource compiler fails on a space in the user's path, on the
+  unmodified tree as well as this branch.

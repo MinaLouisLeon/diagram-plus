@@ -25,16 +25,32 @@ readable by both of you.
 
 3. Either side      you edit by hand, or ask Claude to edit — both see it live
 
-4. You freeze it    press "Mark ready"
+4. In Claude Code   "design the screens"
+                    → Claude draws each screen and writes .diagrams/<name>.design.json;
+                      you nudge it in the Design tab
 
-5. In Claude Code   "read the diagram and implement it"
-                    → Claude gets the full specification and writes the app,
-                      ticking off each block as it goes
+5. You freeze it    press "Mark ready"
+
+6. In Claude Code   "read the diagram and implement it"
+                    → Claude gets the full specification — the graph *and* the
+                      screen designs — and writes the app, ticking off each
+                      block as it goes
 ```
 
 Nothing is hidden in a database. Diagrams live as pretty-printed JSON in
 `.diagrams/` inside your project, so they are reviewed and committed alongside the
-code they describe.
+code they describe. The screen designs sit beside them in
+`.diagrams/<name>.design.json` — a separate file because a screen tree dwarfs the
+graph it belongs to, and burying one in the other would make every diagram diff
+unreadable.
+
+There are three documents, and they share a name:
+
+| Tab | File | What it holds |
+|---|---|---|
+| **Diagram** | `<name>.diagram.json` | What the application *is* — typed blocks and connections |
+| **Client view** | inside the diagram | The same thing in plain words, to review with a client |
+| **Design** | `<name>.design.json` | What each screen *looks like* — a typed layout tree |
 
 ---
 
@@ -232,6 +248,94 @@ endpoint, service and screen with its fields — and writes the project. As each
 lands it calls `mark_block_implemented`, so the **Progress** panel fills in while you
 watch.
 
+### Design the screens
+
+A diagram says a screen exists, what it is for, what state it holds and which
+endpoint its buttons call. It does not say what it looks like — so an implementer
+either invents the interface as they go, or waits for a mock-up that lives in
+somebody else's tool and goes stale the day it is drawn.
+
+The **Design** tab is the third document: an artboard per screen, on a canvas you
+pan and zoom, with a layers tree on the left and the properties of whatever you
+clicked on the right.
+
+```
+┌ layers ┐┌──────── canvas ─────────┐┌ properties ┐
+│ ▾ Login││   ┌──────────────────┐  ││ Button     │
+│  Title ││   │  Welcome back    │  ││ text       │
+│  Email ││   │  [ you@…       ] │  ││  Sign in   │
+│  Pass  ││   │  [ ••••••••    ] │  ││ does →     │
+│  ▸ Btn ││   │  [   Sign in   ] │  ││  POST /api │
+│  Link  ││   │  Forgot?         │  ││ goes →     │
+│        ││   └──────────────────┘  ││  Products  │
+└────────┘└─────────────────────────┘└────────────┘
+```
+
+Ask Claude to draw them:
+
+> design the screens for the recipe-box project
+
+It sets the design system first — the colours, the type scale, the spacing step —
+then draws each screen against those token *names*, so changing `accent` later
+restyles every artboard at once.
+
+#### It starts from the diagram, not from nothing
+
+**Update from diagram** gives every `ui_screen` block a design seeded from what the
+block already says: a header with its name, a field per piece of its state, a button
+per action. Every hook is already wired — the email field is bound to `state.email`,
+the sign-in button already points at `POST /api/session` — because the diagram knew
+all of that and re-typing it into a design tool is how a specification and its
+mock-ups drift apart.
+
+What you get is a wireframe of the *right thing*, so the first real design decision
+is the first thing anyone has to make.
+
+#### It is layout, not markup
+
+An element is a `button` or an `input`, not a rounded rectangle: it has a variant, a
+binding, an action. Sizes are `fill`, `hug` or a number rather than CSS, and colours
+are token names rather than hex. That is what lets the same document be dragged
+around by a person, written by Claude, and read as a contract by whoever builds it —
+and what stops an absolutely-positioned mock-up that cannot be built responsively.
+
+Screens are never silently lost. Delete a block from the diagram and its design is
+flagged, not destroyed; re-word a screen here and the next sync keeps your wording.
+
+#### It reaches the implementation
+
+`read_implementation_spec` returns the design system and, under every screen, the
+layout it was designed with:
+
+```
+### 🖥 Sign in
+Route: `/login`
+
+**Design — Sign in** · desktop 1440×900 · `/login`
+
+- stack Centre (column, gap 20, pad 120/420)
+  - heading "Welcome back" [heading.lg]
+  - form (column, gap 16)
+      does → POST /api/session
+    - input "Email" *required
+      value ← state.email
+    - button "Sign in" [primary]
+      does → POST /api/session
+      goes → Products
+
+**Other states**
+- **Error** (the password is wrong) — A red line above the form.
+```
+
+No generated markup: Claude writes the component in your project's own stack. What
+it gets from here is the contract — the elements in that order, the real words, what
+each field is bound to and what each button does.
+
+The strip along the bottom of the tab counts the holes worth chasing: screens with
+no design, buttons that neither call anything nor go anywhere, fields with nowhere
+to put their value. Those are exactly the places an implementer would otherwise have
+to guess.
+
 ### Show it to someone who did not draw it — and let them change it
 
 A finished diagram is a good specification and a poor explanation: a client looking
@@ -419,14 +523,15 @@ dgp install-mcp         Register the MCP server with your AI tools
 
 ## MCP tools
 
-31 tools, grouped by what they are for. Full reference:
+39 tools, grouped by what they are for. Full reference:
 [docs/mcp-tools.md](docs/mcp-tools.md).
 
-**Discovery** `describe_block_schema`
+**Discovery** `describe_block_schema` · `describe_design_schema`
 **Reading** `list_diagrams` · `get_diagram` · `get_block` · `search_blocks` · `read_implementation_spec` · `read_project_tree` · `validate_diagram` · `export_diagram`
 **Creating** `create_diagram` · `create_diagram_from_outline`
 **Editing** `add_blocks` · `update_block` · `delete_blocks` · `add_edges` · `update_edge` · `delete_edges` · `apply_batch` · `move_blocks` · `auto_layout` · `update_diagram_meta` · `delete_diagram`
 **Client view** `read_client_view` · `update_client_view` · `sync_client_view` · `apply_client_view`
+**Screen designs** `read_screen_design` · `design_screen` · `update_screen_design` · `set_design_system` · `sync_screen_designs` · `arrange_screen_designs` · `design_progress`
 **Building** `set_diagram_status` · `mark_block_implemented` · `implementation_progress` · `open_editor`
 **Sharing** `import_diagram`
 
@@ -443,6 +548,7 @@ Two prompts are exposed as well: `design_project` and `implement_from_diagram`.
                                                           ▼    └──────┬───────┘
                                         ┌──────────────────────────┐  │ HTTP+WS
                                         │  .diagrams/*.diagram.json│◄─┤
+                                        │  .diagrams/*.design.json │  │
                                         │  (single source of truth)│  │
                                         └──────────────────────────┘  │
                                                           ▲           │
@@ -459,7 +565,7 @@ are indistinguishable by the time they reach the file. The server watches
 
 | Package | Purpose |
 |---|---|
-| `@diagram-plus/core` | Schema, catalog, validation, file store, layout, spec generator, exporters |
+| `@diagram-plus/core` | Schema, catalog, validation, file store, layout, spec generator, exporters, the design model |
 | `@diagram-plus/server` | Local HTTP + WebSocket server, file watcher, `dgp` CLI |
 | `@diagram-plus/mcp` | The MCP server |
 | `@diagram-plus/web` | The React editor |

@@ -15,24 +15,31 @@ import { copyText } from '../text-menu';
 
 export function Sidebar({ onNewDiagram }: { onNewDiagram: () => void }) {
   const [tab, setTab] = useState<'diagrams' | 'palette'>('palette');
-  const { current } = useEditorState();
+  const { current, view } = useEditorState();
+
+  // Blocks are dragged onto the diagram canvas and nowhere else. The design
+  // tab has a palette of its own, and two palettes side by side — one of them
+  // inert — is worse than not offering the second.
+  const canDragBlocks = Boolean(current) && view === 'diagram';
+  const showing = canDragBlocks && tab === 'palette' ? 'palette' : 'diagrams';
 
   return (
     <aside className="sidebar">
       <div className="sidebar-tabs">
         <button
-          className={tab === 'palette' ? 'active' : ''}
+          className={showing === 'palette' ? 'active' : ''}
           onClick={() => setTab('palette')}
-          disabled={!current}
+          disabled={!canDragBlocks}
+          title={canDragBlocks ? undefined : 'Blocks are dragged onto the diagram'}
         >
           Blocks
         </button>
-        <button className={tab === 'diagrams' ? 'active' : ''} onClick={() => setTab('diagrams')}>
+        <button className={showing === 'diagrams' ? 'active' : ''} onClick={() => setTab('diagrams')}>
           Diagrams
         </button>
       </div>
       <div className="sidebar-body">
-        {tab === 'palette' && current ? <Palette /> : <DiagramList onNewDiagram={onNewDiagram} />}
+        {showing === 'palette' ? <Palette /> : <DiagramList onNewDiagram={onNewDiagram} />}
       </div>
     </aside>
   );

@@ -12,8 +12,21 @@ interface ToolbarProps {
 }
 
 export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
-  const { current, connection, saving, dirty, panel, view, canUndo, canRedo, validation, diagrams } =
-    useEditorState();
+  const {
+    current,
+    connection,
+    saving,
+    dirty,
+    panel,
+    view,
+    canUndo,
+    canRedo,
+    validation,
+    diagrams,
+    designSaving,
+    designDirty,
+    designProgress,
+  } = useEditorState();
   const { root } = useProject();
   const stats = current ? diagramStats(current) : null;
   const errorCount = validation?.errors.length ?? 0;
@@ -52,8 +65,8 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
           </div>
           <span className={`pill ${current.status}`}>{current.status}</span>
 
-          {/* Two documents, one file: the diagram it is built from, and the
-              view the client is shown. */}
+          {/* Three documents describing one project: what it is, how it is
+              explained, and what it looks like. */}
           <div className="seg" role="group" aria-label="Which view">
             <button
               className={`btn small${view === 'diagram' ? ' primary' : ''}`}
@@ -68,6 +81,16 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
               title="The plain-language view to review with a client, and edit with them"
             >
               Client view
+            </button>
+            <button
+              className={`btn small${view === 'design' ? ' primary' : ''}`}
+              onClick={() => store.setView('design')}
+              title="What each screen looks like — the design Claude builds the interface from"
+            >
+              Design
+              {designProgress && designProgress.screens ? (
+                <span>{designProgress.completion}%</span>
+              ) : null}
             </button>
           </div>
         </>
@@ -124,17 +147,33 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
             </>
           ) : null}
 
+          {view === 'design' ? (
+            <button
+              className="btn"
+              title="Lay the artboards out in a grid"
+              onClick={() => store.tidyDesign()}
+            >
+              Tidy up
+            </button>
+          ) : null}
           <button
-            className={`btn${dirty ? ' primary' : ''}`}
-            disabled={!dirty || saving}
+            className={`btn${dirty || designDirty ? ' primary' : ''}`}
+            disabled={(!dirty && !designDirty) || saving || designSaving}
             onClick={() => void store.save()}
             title={
-              dirty
-                ? 'Write your changes to the diagram file (Ctrl+S)'
+              dirty || designDirty
+                ? // One button, two files: the diagram and the designs beside it.
+                  `Write your changes to ${
+                    dirty && designDirty
+                      ? 'the diagram and the design files'
+                      : designDirty
+                        ? 'the design file'
+                        : 'the diagram file'
+                  } (Ctrl+S)`
                 : 'Everything is saved'
             }
           >
-            {saving ? 'Saving…' : 'Save'}
+            {saving || designSaving ? 'Saving…' : 'Save'}
           </button>
           <button
             className="btn primary"

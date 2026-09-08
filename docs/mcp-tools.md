@@ -1,14 +1,21 @@
 # MCP tools
 
-The diagram-plus MCP server exposes 31 tools, 1 resource and 2 prompts. Every tool
+The diagram-plus MCP server exposes 39 tools, 1 resource and 2 prompts. Every tool
 that targets a diagram takes `diagram` — its slug, its id, or its exact name.
 
-Tool descriptions carry the block payload fields inline, so Claude knows what it can
-fill in without a round trip. When in doubt it should call `describe_block_schema`.
+Tool descriptions carry the block payload fields and the design element vocabulary
+inline, so Claude knows what it can fill in without a round trip. When in doubt it
+should call `describe_block_schema` or `describe_design_schema`.
 
 ---
 
 ## Discovery
+
+### `describe_design_schema`
+Every element a screen can hold, the properties each one uses, its defaults, and the
+full layout and style vocabulary. Optionally narrowed to one `elementType`. It also
+returns the house rules and a worked example, which between them are worth more than
+any amount of prose about how to draw a screen.
 
 ### `describe_block_schema`
 Lists every block type and connection type with the exact fields each payload
@@ -215,6 +222,132 @@ the rest, is the next piece of work — the tool response says which blocks need
 
 ---
 
+## Screen designs
+
+The third document, in its own file beside the diagram: what each screen actually
+looks like, as a typed layout tree rather than markup or a picture. A `button` here
+is a button — it has a variant, an action that names an endpoint in the diagram, and
+a screen it navigates to — so the same document can be dragged around by a person,
+written by Claude, and read as a contract by whoever builds it.
+
+The order that works:
+
+1. `set_design_system` — the colours, the type scale, the spacing step. **First**,
+   so every screen is drawn against token names rather than raw values.
+2. `sync_screen_designs` — a wireframe per `ui_screen` block, seeded from what the
+   block already says, with every field and button already wired.
+3. `design_screen` — the real design for each, one whole tree per call.
+4. `read_implementation_spec` — the graph and the designs together, to build from.
+
+The house rules, which the tool descriptions repeat:
+
+- Nest stacks; never position anything by hand. A design placed at x/y cannot be
+  built responsively.
+- Refer to tokens (`accent`, `heading.lg`, radius `md`), not to raw hex.
+- Write the real words. A screen full of "Button" is not a design anyone can build.
+- Every button either `action`s or `navigatesTo`. One with neither is a hole.
+- Every field says where its value lives: `binding: "state.email"`.
+- Draw one row inside a `list` and set what it repeats over. Never paste it out five
+  times.
+
+### `read_screen_design`
+What the screens look like: every element, its words, where its value comes from and
+what using it does. **Read this before implementing any screen** — the diagram says
+what the screen is for, this says what to build.
+
+| Argument | What it does |
+|---|---|
+| `screen` | Just one screen. Omit for the design system and all of them |
+| `json` | Return the raw element tree as well, for editing it precisely |
+
+A project that has never been designed gets a document derived from the diagram
+without anything being written, so reading never creates a file.
+
+### `design_screen`
+Draw a screen: its whole layout as one nested element tree. This is the main tool —
+write the screen in one call rather than adding elements one at a time.
+
+```jsonc
+{
+  "diagram": "recipe-box",
+  "screen": "Sign in",
+  "root": {
+    "type": "stack",
+    "layout": { "direction": "column", "gap": 24, "padding": { "top": 32, "left": 32 } },
+    "children": [
+      { "type": "heading", "text": "Welcome back", "style": { "text": "heading.lg" } },
+      { "type": "form", "action": "POST /api/session", "children": [
+        { "type": "input", "label": "Email", "binding": "state.email", "required": true },
+        { "type": "button", "text": "Sign in", "variant": "primary",
+          "action": "POST /api/session", "navigatesTo": "Products" }
+      ] }
+    ]
+  },
+  "states": [
+    { "name": "Error", "when": "the password is wrong", "changes": "A red line above the form." }
+  ]
+}
+```
+
+Ids are minted for you, and anything left out takes that element type's default — so
+a button needs only its text and what it does. `variant` designs a second artboard
+for the same screen ("Empty", "Error", "Signed out").
+
+`states` are for what is not worth its own artboard: what changes while it loads,
+when there is nothing to show, when it fails. They reach the implementation spec as
+words, which for most of them is all they ever needed.
+
+### `update_screen_design`
+Precise changes rather than a whole screen: add or retype one element, rebind a
+field, move something into a different container, reorder the screens. Takes a list
+of operations in the same vocabulary the editor uses, applied in order.
+
+`add_screen` · `update_screen` · `remove_screen` · `duplicate_screen` ·
+`move_screen` · `reorder_screens` · `set_tree` · `add_element` · `update_element` ·
+`remove_element` · `duplicate_element` · `move_element` · `set_system` · `set_notes`
+
+Operations that fail are reported alongside the ones that worked, so a batch of
+twenty edits is not lost to one bad reference.
+
+### `set_design_system`
+The tokens every screen is drawn against. Do this first. Each list you pass replaces
+that list wholesale; lists you leave out are untouched, and a sensible neutral set is
+already in place — so you can change only what matters.
+
+```jsonc
+{
+  "diagram": "recipe-box",
+  "system": {
+    "voice": "Warm and unhurried. Generous whitespace, one accent colour.",
+    "colors": [{ "name": "accent", "value": "#7c3aed", "on": "#ffffff" }]
+  }
+}
+```
+
+### `sync_screen_designs`
+Give every `ui_screen` and `ui_component` block a design, seeded from the block: a
+header with its name, a field per piece of its state (already bound), a button per
+action (already pointing at the endpoint it calls).
+
+Screens already drawn are kept — their wording, their layout, their elements. A
+screen whose block has been deleted is flagged, never removed.
+
+| Argument | What it does |
+|---|---|
+| `rebuild` | Throw every design away and re-seed. Loses all design work; the tokens survive. Ask first |
+| `layout` | Re-arrange the artboards into a grid afterwards |
+
+### `arrange_screen_designs`
+Lay the artboards out in a grid in walkthrough order. Cosmetic — it changes where
+screens sit on the canvas, never what is on them.
+
+### `design_progress`
+How much of the interface is designed, which blocks still have none, and the holes
+worth chasing: buttons that neither call anything nor go anywhere, fields with
+nowhere to put their value.
+
+---
+
 ## Building
 
 ### `set_diagram_status`
@@ -288,4 +421,5 @@ then services, endpoints and screens, build it in one call, hand back the URL.
 
 ### `implement_from_diagram(diagram)`
 Walks through building one: read the spec, follow the build order, treat the field
-names and routes as the contract, ask rather than invent, and record progress.
+names and routes as the contract, build each screen from its design rather than from
+your own idea of it, ask rather than invent, and record progress.
