@@ -15,20 +15,20 @@ import {
   type DesignDocument,
   type DesignOperation,
   type Diagram,
-  type ElementType,
 } from '@diagram-plus/core';
 import {
   DESIGN_EXAMPLE,
   DESIGN_RULES,
-  allElementTypesHint,
-  designCatalogJson,
+  STYLESHEET_CLASSES,
+  designVocabularyJson,
+  tokenReference,
 } from './design-hints.js';
 import {
   designOperationSchema,
   designSystemSchema,
   deviceEnum,
-  elementTreeSchema,
-  elementTypeEnum,
+  htmlSchema,
+  screenCssSchema,
   screenRef,
   screenStateSchema,
 } from './design-schemas.js';
@@ -65,6 +65,19 @@ const fail = (message: string): ToolResult => ({
 
 function block(title: string, body: string, lang = 'json'): string {
   return `${title}\n\n\`\`\`${lang}\n${body}\n\`\`\``;
+}
+
+/**
+ * Put what was silently put right in front of the caller.
+ *
+ * An edit that was applied but quietly corrected is the case where saying
+ * nothing costs the most: the model believes it drew what it sent, carries on
+ * the same way for the next fifteen screens, and the person who finds out is
+ * the client looking at the canvas.
+ */
+function noteCorrections(corrections: string[]): string[] {
+  if (!corrections.length) return [];
+  return [['**Corrected on the way in**', ...corrections.map((c) => `- ${c}`)].join('\n')];
 }
 
 export function registerDesignTools(server: McpServer, options: DesignToolOptions): void {
@@ -150,24 +163,35 @@ export function registerDesignTools(server: McpServer, options: DesignToolOption
     {
       title: 'Describe the design vocabulary',
       description:
-        'List every element type a screen can hold, with the properties each one uses, its ' +
-        'defaults, and the full layout and style vocabulary. Call this before designing a screen ' +
-        'if you are unsure which element fits or what a property is called.\n\n' +
-        `The elements:\n${allElementTypesHint()}`,
+        'How screens are written here: the data-* attributes that carry the wiring, the CSS ' +
+        'variables and classes available, and what gets stripped on the way in. A screen is ' +
+        'plain HTML, so there is no element catalog to learn — call this for the parts HTML ' +
+        'does not say on its own.',
       inputSchema: {
-        elementType: elementTypeEnum.optional().describe('Limit the answer to one element type.'),
+        diagram: diagramRef
+          .optional()
+          .describe('Read the tokens from this diagram\u2019s design system rather than the defaults.'),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ elementType }) =>
-      text(
+    async ({ diagram }) => {
+      const design = diagram
+        ? await store
+            .read(diagram)
+            .then((d) => designs.ensure(d))
+            .catch(() => null)
+        : null;
+      return text(
         block(
-          elementType
-            ? `Schema for the "${elementType}" element:`
-            : 'The diagram-plus design vocabulary:',
-          JSON.stringify(designCatalogJson(elementType as ElementType | undefined), null, 2),
-        ) + `\n\nHow to design a screen:\n${DESIGN_RULES}\n\nA worked example:\n\n\`\`\`json\n${DESIGN_EXAMPLE}\n\`\`\``,
-      ),
+          'How a screen is written:',
+          JSON.stringify(designVocabularyJson(design?.system), null, 2),
+        ) +
+          `\n\nThe tokens to style against:\n${tokenReference(design?.system)}` +
+          `\n\nClasses the stylesheet already gives you:\n${STYLESHEET_CLASSES}` +
+          `\n\nHow to design a screen:\n${DESIGN_RULES}` +
+          `\n\nA worked example:\n\n\`\`\`html\n${DESIGN_EXAMPLE}\n\`\`\``,
+      );
+    },
   );
 
   /* ================================================================ *
@@ -190,7 +214,7 @@ export function registerDesignTools(server: McpServer, options: DesignToolOption
         json: z
           .boolean()
           .optional()
-          .describe('Return the raw element tree as JSON as well — for editing it precisely.'),
+          .describe('Return the raw markup as well — for editing it precisely.'),
       },
       annotations: { readOnlyHint: true },
     },
@@ -236,7 +260,8 @@ export function registerDesignTools(server: McpServer, options: DesignToolOption
           renderDesignSystem(design.system),
         ];
         if (json) {
-          parts.push('', block('The element tree:', JSON.stringify(found.root, null, 2)));
+          parts.push('', block('The markup:', found.html, 'html'));
+          if (found.css) parts.push('', block('Its own CSS:', found.css, 'css'));
         }
         return text(parts.join('\n'));
       }),
@@ -304,19 +329,21 @@ export function registerDesignTools(server: McpServer, options: DesignToolOption
     {
       title: 'Design a screen',
       description:
-        'Draw a screen: pass its whole layout as one nested element tree. This is the main tool ' +
-        'for designing — write the screen in one call rather than adding elements one at a ' +
-        'time.\n\n' +
+        'Draw a screen: write it as HTML. This is the main tool for designing — write the whole ' +
+        'screen in one call rather than making thirty small edits.\n\n' +
+        'The user shows these to their client, so make it look like a finished product rather ' +
+        'than a wireframe: real copy, real names, plausible figures, a considered hierarchy. ' +
+        'The browser lays it out, so nothing can overlap and nothing needs positioning.\n\n' +
         'The screen may already exist (seeded from its ui_screen block by sync_screen_designs), ' +
-        'in which case its tree is replaced; name a block that has no design and one is created ' +
-        'for it.\n\n' +
+        'in which case its markup is replaced; name a block that has no design and one is ' +
+        'created for it.\n\n' +
         `Rules:\n${DESIGN_RULES}\n\n` +
-        `The elements:\n${allElementTypesHint()}\n\n` +
-        `Example \`root\`:\n${DESIGN_EXAMPLE}`,
+        `A worked example:\n${DESIGN_EXAMPLE}`,
       inputSchema: {
         diagram: diagramRef,
         screen: screenRef,
-        root: elementTreeSchema.describe('The whole layout of the screen, as one nested element.'),
+        html: htmlSchema,
+        css: screenCssSchema,
         variant: z
           .string()
           .optional()
@@ -336,7 +363,7 @@ export function registerDesignTools(server: McpServer, options: DesignToolOption
         notes: z.string().optional().describe('Anything the implementer needs that the tree cannot say.'),
       },
     },
-    async ({ diagram, screen, root, variant, device, purpose, states, notes }) =>
+    async ({ diagram, screen, html, css, variant, device, purpose, states, notes }) =>
       mutate(diagram, (design, d) => {
         const needle = screen.trim().toLowerCase();
         const target = variant
@@ -355,7 +382,8 @@ export function registerDesignTools(server: McpServer, options: DesignToolOption
 
         const operations: DesignOperation[] = [];
         if (target) {
-          operations.push({ op: 'set_tree', screen: target.id, root });
+          operations.push({ op: 'set_html', screen: target.id, html });
+          if (css !== undefined) operations.push({ op: 'set_css', screen: target.id, css });
           operations.push({
             op: 'update_screen',
             screen: target.id,
@@ -378,7 +406,8 @@ export function registerDesignTools(server: McpServer, options: DesignToolOption
             variant: variant ?? '',
             purpose: purpose ?? '',
             device,
-            root,
+            html,
+            css,
             states: states?.map(normalizeState),
           });
           if (notes !== undefined) {
@@ -407,9 +436,12 @@ export function registerDesignTools(server: McpServer, options: DesignToolOption
             (s.name.toLowerCase() === (target?.name.toLowerCase() ?? needle) &&
               s.variant === (variant ?? '')),
         );
-        return drawn
+        const headline = drawn
           ? `Designed **${drawn.variant ? `${drawn.name} — ${drawn.variant}` : drawn.name}**.\n\n${renderScreenOutline(drawn)}`
           : `Designed "${screen}".`;
+        // The corrections go after the outline, because the outline is what
+        // actually landed — the tree as it now is, not the tree as it was sent.
+        return [headline, ...noteCorrections(result.corrections)].join('\n\n');
       }),
   );
 
@@ -418,10 +450,11 @@ export function registerDesignTools(server: McpServer, options: DesignToolOption
     {
       title: 'Edit the screen designs',
       description:
-        'Make precise changes to the designs: add or retype one element, rebind a field, move ' +
-        'something into a different container, add an artboard for the empty state, reorder the ' +
-        'screens. Use design_screen to draw a whole screen; use this to adjust one.\n\n' +
-        `The elements:\n${allElementTypesHint()}`,
+        'Make precise changes to the designs: rebind a field, retitle something, insert markup, ' +
+        'move an element, add an artboard for the empty state, reorder the screens. Use ' +
+        'design_screen to draw a whole screen; use this to adjust one.\n\n' +
+        'Elements are referred to by their data-el id, by the words on them, or by tag when ' +
+        'there is only one.',
       inputSchema: {
         diagram: diagramRef,
         operations: z
@@ -438,7 +471,7 @@ export function registerDesignTools(server: McpServer, options: DesignToolOption
         if (result.errors.length) {
           lines.push(...result.errors.map((e) => `  operation ${e.index} (${e.op}): ${e.message}`));
         }
-        return lines.join('\n');
+        return [lines.join('\n'), ...noteCorrections(result.corrections)].join('\n\n');
       }),
   );
 
@@ -463,6 +496,36 @@ export function registerDesignTools(server: McpServer, options: DesignToolOption
         Object.assign(design, result.document);
         if (result.errors.length) return `Could not set the design system: ${result.errors[0]?.message}`;
         return `Design system updated.\n\n${renderDesignSystem(result.document.system)}`;
+      }),
+  );
+
+  server.registerTool(
+    'set_design_css',
+    {
+      title: 'Set the shared stylesheet',
+      description:
+        'The stylesheet every screen is drawn against, on top of the tokens. This is where a ' +
+        'button, a card or a table gets its look — once, for the whole project, so twenty ' +
+        'screens come out looking like one product and the implementer receives one stylesheet ' +
+        'rather than twenty variations on it.\n\n' +
+        'A sensible default is already in place. Replace it to give the product a voice of its ' +
+        'own, and write it against the tokens — `var(--color-accent)`, not `#2563eb` — or ' +
+        'changing a token in the panel stops restyling anything.\n\n' +
+        `The tokens you can refer to:\n${tokenReference()}`,
+      inputSchema: {
+        diagram: diagramRef,
+        css: z.string().describe('Replaces the whole shared stylesheet.'),
+      },
+    },
+    async ({ diagram, css }) =>
+      mutate(diagram, (design) => {
+        const result = editDesign(design, [{ op: 'set_css', css }]);
+        Object.assign(design, result.document);
+        if (result.errors.length) return `Could not set the stylesheet: ${result.errors[0]?.message}`;
+        return [
+          `Shared stylesheet updated (${css.split('\n').length} lines).`,
+          ...noteCorrections(result.corrections),
+        ].join('\n\n');
       }),
   );
 

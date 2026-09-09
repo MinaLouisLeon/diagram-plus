@@ -1,108 +1,123 @@
-import {
-  ELEMENT_CATALOG,
-  ELEMENT_CATEGORIES,
-  ELEMENT_TYPES,
-  type ElementType,
-} from '@diagram-plus/core';
+import { DEFAULT_DESIGN_SYSTEM, type DesignSystem, tokenSlug } from '@diagram-plus/core';
 
 /**
- * Compact descriptions of the element vocabulary.
+ * What a model needs to know to draw a screen here.
  *
  * Baked into the design tool descriptions so a screen can be written without a
  * round-trip to `describe_design_schema` first — the same bargain `hints.ts`
  * makes for block payloads.
+ *
+ * A screen is HTML now, so most of what used to live here is gone: there is no
+ * closed list of thirty-six element types to explain, because the list is
+ * "HTML". What is left is the part HTML does not say on its own — which
+ * attributes carry the wiring, which CSS variables exist, and the handful of
+ * habits that separate a design somebody can show a client from a page of
+ * unstyled tags.
  */
-
-export function elementTypeLine(type: ElementType): string {
-  const info = ELEMENT_CATALOG[type];
-  const props = info.props.length ? ` props: ${info.props.join(', ')}` : '';
-  return `- ${type}${info.container ? ' (holds children)' : ''} — ${info.description}${props}`;
-}
-
-export function allElementTypesHint(): string {
-  return ELEMENT_CATEGORIES.map((category) => {
-    const types = ELEMENT_TYPES.filter((type) => ELEMENT_CATALOG[type].category === category.id);
-    return [`${category.label}:`, ...types.map(elementTypeLine)].join('\n');
-  }).join('\n\n');
-}
 
 /** The house rules. Short, because they are repeated on several tools. */
 export const DESIGN_RULES = [
-  'Nest stacks rather than positioning anything by hand — a design placed at x/y cannot be built responsively.',
-  'Refer to tokens (accent, surface, heading.lg, radius md), never to raw hex, unless you are defining the token itself.',
-  'Write the real words. A screen full of "Lorem ipsum" or "Button" is not a design anybody can build from.',
-  'Every button either calls something (action) or goes somewhere (navigatesTo). One with neither is a hole.',
-  'Every field says where its value lives (binding), e.g. state.email or Order.total.',
-  'Draw one row inside a list and set what it repeats over. Never paste the row out five times.',
-].map((rule, index) => `${index + 1}. ${rule}`).join('\n');
+  'Write real HTML with semantic tags — header, nav, form, label, table, button, dialog. The ' +
+    'browser lays it out, so nothing needs positioning and nothing can overlap.',
+  'Style with the shared stylesheet’s classes and the CSS variables — var(--color-accent), ' +
+    'var(--radius-md), var(--space). Never a raw hex value, or the tokens panel stops working.',
+  'Write the real words, and real-looking data. The user shows these to a client to win the ' +
+    'work: "Aisha Rahman · 14 Mar 1988" sells it, "Lorem ipsum" and "Row 1" do not.',
+  'Every button and link either calls something (data-action="POST /api/…") or goes somewhere ' +
+    '(data-navigates-to="Screen name"). One with neither is a hole.',
+  'Every field says where its value lives: data-binding="state.email" or "Order.total".',
+  'Draw one row and set data-repeat="Patient" data-repeat-count="6" on what holds it. Never ' +
+    'paste the row out six times.',
+  'No <script>, no inline event handlers, no remote images — they are stripped on the way in. ' +
+    'For imagery use inline <svg> or a CSS gradient, and describe photographs in alt text.',
+] .map((rule, index) => `${index + 1}. ${rule}`).join('\n');
 
-/** A worked example, which is worth more than any amount of prose. */
-export const DESIGN_EXAMPLE = `{
-  "type": "stack",
-  "layout": { "direction": "column", "gap": 24, "padding": { "top": 32, "right": 32, "bottom": 32, "left": 32 } },
-  "children": [
-    { "type": "heading", "text": "Welcome back", "style": { "text": "heading.lg" } },
-    { "type": "text", "text": "Sign in to pick up where you left off.", "style": { "color": "subtle" } },
-    { "type": "form", "action": "POST /api/session", "layout": { "gap": 16 }, "children": [
-      { "type": "input", "label": "Email", "placeholder": "you@example.com", "binding": "state.email", "required": true },
-      { "type": "input", "label": "Password", "variant": "password", "binding": "state.password", "required": true },
-      { "type": "button", "text": "Sign in", "variant": "primary", "action": "POST /api/session", "layout": { "width": "fill" } }
-    ] },
-    { "type": "link", "text": "Forgot your password?", "navigatesTo": "Reset password" }
-  ]
-}`;
+/** The attributes that carry the contract, since HTML has no opinion on them. */
+export const DATA_ATTRIBUTES: Record<string, string> = {
+  'data-binding': 'Where the value comes from: state.email, Order.total, props.label.',
+  'data-action': 'What using it does. Name the endpoint or service block it reaches.',
+  'data-navigates-to': 'The ui_screen it opens, by name or block id.',
+  'data-repeat': 'The data model this is drawn once per. Put it on the container.',
+  'data-repeat-count': 'How many to show in the mock-up. Defaults to 3.',
+  'data-component': 'For an instance of a ui_component block: that block’s id.',
+  'data-visible-when': 'Only drawn when this holds, e.g. "the basket is empty".',
+  'data-src': 'What an image shows, when it is a description rather than a file.',
+  'data-note': 'Anything the implementer needs that the markup cannot say.',
+  'data-el': 'The editor’s handle on an element. Minted for you — never write one.',
+};
 
-/** Full element catalog as JSON, for `describe_design_schema`. */
-export function designCatalogJson(type?: ElementType) {
-  const types = type ? [type] : ELEMENT_TYPES;
+/** Every CSS variable and class a screen can refer to, from the live tokens. */
+export function tokenReference(system: DesignSystem = DEFAULT_DESIGN_SYSTEM): string {
+  const lines: string[] = [];
+  lines.push(
+    'Colours: ' + system.colors.map((c) => `var(--color-${tokenSlug(c.name)})`).join(', '),
+  );
+  lines.push(
+    'Readable-on colours: ' +
+      system.colors.filter((c) => c.on).map((c) => `var(--on-${tokenSlug(c.name)})`).join(', '),
+  );
+  lines.push('Type scale: ' + system.typography.map((t) => `.text-${tokenSlug(t.name)}`).join(', '));
+  lines.push('Radii: ' + system.radii.map((r) => `var(--radius-${tokenSlug(r.name)})`).join(', '));
+  lines.push('Shadows: ' + system.shadows.map((s) => `var(--shadow-${tokenSlug(s.name)})`).join(', '));
+  lines.push('Spacing: var(--space) — multiply it, e.g. calc(var(--space) * 3).');
+  return lines.join('\n');
+}
+
+/** Classes the default stylesheet already provides, so screens stay consistent. */
+export const STYLESHEET_CLASSES = [
+  '.screen — the outermost element of a page: a padded column.',
+  '.row / .col — a flex row or column with a gap. .grow takes the leftover space.',
+  '.card — a bordered, padded surface. .grid — cards that wrap into columns.',
+  '.btn with .primary / .danger / .ghost — buttons. A bare <button> is the quiet one.',
+  '.badge with .success / .warning — a small pill of status.',
+  '.avatar — a round placeholder for a person. .muted — secondary text.',
+  'header.topbar — the bar across the top. aside.sidebar — a fixed column down one side.',
+].join('\n');
+
+/**
+ * A worked example, which is worth more than any amount of prose.
+ *
+ * Chosen to show the things that are easy to get wrong: the wiring on
+ * `data-*`, one repeated row rather than six, tokens rather than hex, and copy
+ * that reads like a real product rather than a placeholder.
+ */
+export const DESIGN_EXAMPLE = `<main class="screen">
+  <header class="topbar">
+    <h1 class="text-heading-lg grow">Patients</h1>
+    <button class="btn primary" data-action="POST /api/patients">Add patient</button>
+  </header>
+
+  <label>Search
+    <input type="search" placeholder="Name or NHS number" data-binding="state.search">
+  </label>
+
+  <table data-repeat="Patient" data-repeat-count="6">
+    <thead>
+      <tr><th>Name</th><th>Date of birth</th><th>Last seen</th><th></th></tr>
+    </thead>
+    <tbody>
+      <tr data-navigates-to="Patient detail">
+        <td>Aisha Rahman</td>
+        <td>14 March 1988</td>
+        <td>2 weeks ago</td>
+        <td><span class="badge success">Active</span></td>
+      </tr>
+    </tbody>
+  </table>
+</main>`;
+
+/** The whole vocabulary as JSON, for `describe_design_schema`. */
+export function designVocabularyJson(system?: DesignSystem) {
   return {
-    elementTypes: types.map((t) => ({
-      type: t,
-      label: ELEMENT_CATALOG[t].label,
-      category: ELEMENT_CATALOG[t].category,
-      container: ELEMENT_CATALOG[t].container,
-      description: ELEMENT_CATALOG[t].description,
-      whenToUse: ELEMENT_CATALOG[t].whenToUse,
-      props: ELEMENT_CATALOG[t].props,
-      defaults: ELEMENT_CATALOG[t].defaults,
-    })),
-    ...(type
-      ? {}
-      : {
-          layout: {
-            direction: 'row | column',
-            gap: 'pixels between children',
-            padding: '{ top, right, bottom, left } in pixels',
-            align: 'start | center | end | stretch | baseline (across the direction)',
-            justify: 'start | center | end | between | around | evenly (along it)',
-            wrap: 'boolean',
-            columns: 'for grid: how many',
-            width: '"fill" | "hug" | pixels',
-            height: '"fill" | "hug" | pixels',
-            grow: 'share of the leftover space',
-            absolute: 'free placement — only inside a frame, and avoid it',
-            x: 'pixels from the parent left, when absolute',
-            y: 'pixels from the parent top, when absolute',
-          },
-          style: {
-            text: 'a typography token name, e.g. heading.lg',
-            color: 'a colour token name, or raw CSS',
-            background: 'a colour token name, or raw CSS',
-            border: 'a colour token name for the border',
-            borderWidth: 'pixels',
-            radius: 'a radius token name, e.g. md',
-            shadow: 'a shadow token name',
-            opacity: '0 to 1',
-            align: 'left | center | right — how text sits',
-          },
-          meaning: {
-            binding: 'where the value comes from: state.email, Order.total',
-            action: 'what using it does: name the endpoint or service block it reaches',
-            navigatesTo: 'the ui_screen it opens, by name or block id',
-            visibleWhen: 'only drawn when this holds',
-            repeat: '{ over, count } — draw this subtree once per record',
-            componentId: 'for type "component": the ui_component block it instantiates',
-          },
-        }),
+    format: 'A screen is one HTML fragment plus optional CSS of its own.',
+    dataAttributes: DATA_ATTRIBUTES,
+    tokens: tokenReference(system).split('\n'),
+    stylesheetClasses: STYLESHEET_CLASSES.split('\n'),
+    stripped: [
+      '<script>, <style>, <iframe>, <object>, <embed>, <link>, <meta>',
+      'every on* event handler attribute',
+      'javascript: URLs',
+      'remote images — the URL is kept on data-src and the src dropped',
+    ],
   };
 }

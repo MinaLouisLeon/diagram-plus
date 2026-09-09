@@ -13,7 +13,9 @@ import {
   diffDesign,
   editClientView,
   editDesign,
-  findElement,
+  factsOf,
+  findHtml,
+  parseHtml,
   layoutDesign,
   layoutClientView,
   parseTransfer,
@@ -31,7 +33,7 @@ import {
   type ClientViewOperation,
   type DesignDiff,
   type DesignDocument,
-  type DesignElement,
+  type ElementFacts,
   type DesignOperation,
   type DesignProgress,
   type Diagram,
@@ -248,7 +250,7 @@ class EditorStore {
         : (screens[0]?.id ?? null);
     const screen = screens.find((s) => s.id === selectedScreen);
     const selectedElement =
-      screen && this.state.selectedElement && findElement(screen.root, this.state.selectedElement)
+      screen && this.state.selectedElement && findHtml(parseHtml(screen.html), this.state.selectedElement)
         ? this.state.selectedElement
         : null;
 
@@ -1058,11 +1060,24 @@ class EditorStore {
     return design.screens.find((s) => s.id === this.state.selectedScreen) ?? null;
   }
 
-  /** The element currently selected, and the screen it belongs to. */
-  currentElement(): DesignElement | null {
+  /**
+   * The element currently selected, as the facts the inspector edits.
+   *
+   * Selection is stored as a bare `data-el` string and resolved against the
+   * markup on every read, exactly as it used to be resolved against the tree.
+   * That is what lets an edit from anywhere — the canvas, Claude, a reload —
+   * leave the selection pointing at the right thing or at nothing.
+   */
+  currentElement(): ElementFacts | null {
     const screen = this.currentScreen();
     if (!screen || !this.state.selectedElement) return null;
-    return findElement(screen.root, this.state.selectedElement)?.element ?? null;
+    const found = findHtml(parseHtml(screen.html), this.state.selectedElement);
+    return found ? factsOf(found) : null;
+  }
+
+  /** Read-only view of the editor state, for callers outside the class. */
+  get current(): EditorState {
+    return this.state;
   }
 
   /**

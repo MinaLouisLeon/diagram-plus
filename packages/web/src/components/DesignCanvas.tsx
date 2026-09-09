@@ -9,16 +9,17 @@ import {
 } from 'react';
 import {
   DEVICE_FRAMES,
-  ELEMENT_CATALOG,
-  findElement,
-  isContainer,
+  EL_ID,
+  findHtml,
+  getAttr,
+  parentOf,
+  parseHtml,
   type DesignDocument,
   type DesignOperation,
-  type ElementType,
   type ScreenDesign,
 } from '@diagram-plus/core/browser';
-import { ElementView } from './ElementView';
-import { screenBackground } from '../design-css';
+import { screenDocument } from '../design-css';
+import { snippetById } from '../design-snippets';
 import { showContextMenu, separator } from '../context-menu';
 import { store, useEditorState } from '../store';
 
@@ -134,23 +135,34 @@ export function DesignCanvas({ design }: { design: DesignDocument }) {
 
       if (!side) {
         store.designEdit([
-          { op: 'move_element', screen: screen.id, element: elementId, parent: ref, index },
+          { op: 'move_node', screen: screen.id, element: elementId, parent: ref, index },
         ]);
         return;
       }
 
-      const sibling = findElement(screen.root, ref);
-      if (!sibling?.parent) return;
-      // Dropping something onto a sibling that is already just before it in
-      // the same list would be a no-op; the index still has to account for the
-      // element leaving its old place first.
-      const moving = findElement(screen.root, elementId);
-      const sameParent = moving?.parent?.id === sibling.parent.id;
-      let at = sibling.index + (side === 'after' ? 1 : 0);
-      if (sameParent && moving && moving.index < at) at -= 1;
+      // Dropped beside something rather than into it: the sibling's parent is
+      // where it goes, and the index has to account for the element leaving
+      // its old place first.
+      const fragment = parseHtml(screen.html);
+      const sibling = findHtml(fragment, ref);
+      const parent = sibling && parentOf(sibling);
+      if (!sibling || !parent) return;
+
+      const siblings = parent.childNodes;
+      const moving = findHtml(fragment, elementId);
+      const from = moving && parentOf(moving) === parent ? siblings.indexOf(moving) : -1;
+
+      let at = siblings.indexOf(sibling) + (side === 'after' ? 1 : 0);
+      if (from >= 0 && from < at) at -= 1;
 
       store.designEdit([
-        { op: 'move_element', screen: screen.id, element: elementId, parent: sibling.parent.id, index: at },
+        {
+          op: 'move_node',
+          screen: screen.id,
+          element: elementId,
+          parent: getAttr(parent, EL_ID),
+          index: at,
+        },
       ]);
     },
     [],
@@ -159,25 +171,19 @@ export function DesignCanvas({ design }: { design: DesignDocument }) {
   /** Something dropped from the palette lands inside whatever it was dropped on. */
   const onPaletteDrop = useCallback(
     (screen: ScreenDesign) => (event: DragEvent<HTMLDivElement>) => {
-      const type = event.dataTransfer.getData('application/x-design-type') as ElementType;
-      if (!type || !ELEMENT_CATALOG[type]) return;
+      const id = event.dataTransfer.getData('application/x-design-type');
+      const snippet = snippetById(id);
+      if (!snippet) return;
       event.preventDefault();
       event.stopPropagation();
 
-      // Walk out from whatever is under the pointer to the nearest container.
-      const node = (event.target as HTMLElement).closest('[data-element]');
-      const id = node?.getAttribute('data-element') ?? screen.root.id;
-      let parent = findElement(screen.root, id);
-      while (parent && !isContainer(parent.element.type)) {
-        parent = parent.parent ? findElement(screen.root, parent.parent.id) : null;
-      }
-
       store.designEdit([
         {
-          op: 'add_element',
+          op: 'insert_html',
           screen: screen.id,
-          type,
-          parent: parent?.element.id ?? screen.root.id,
+          html: snippet.html,
+          target: store.current.selectedElement ?? undefined,
+          where: store.current.selectedElement ? 'after' : 'inside',
         },
       ]);
     },
@@ -458,11 +464,7 @@ function Artboard({
 
       <div
         className="design-artboard-body"
-        style={{
-          height: frame.height,
-          background: screenBackground(design.system, screen.background),
-        }}
-        onClick={() => store.selectScreen(screen.id)}
+        style={{ height: frame.height }}
         onDragOver={(event) => {
           if (
             event.dataTransfer.types.includes('application/x-design-type') ||
@@ -479,16 +481,16 @@ function Artboard({
           const moved = event.dataTransfer.getData('application/x-design-element');
           if (moved) {
             event.preventDefault();
-            onMove(moved, screen.root.id, -1);
+            onMove(moved, outermostId(screen), -1);
           }
         }}
       >
-        <ElementView
-          element={screen.root}
-          system={design.system}
-          selectedId={selectedElement}
-          onSelect={(id) => store.selectElement(id, screen.id)}
-          onMove={onMove}
+        <ScreenFrame
+          design={design}
+          screen={screen}
+          selectedElement={selectedElement}
+          onPick={(id) => store.selectElement(id, screen.id)}
+          onPickScreen={() => store.selectScreen(screen.id)}
         />
       </div>
 
@@ -509,6 +511,95 @@ function Artboard({
         }}
       />
     </div>
+  );
+}
+
+/** The outermost element of a screen — where a drop with no target lands. */
+function outermostId(screen: ScreenDesign): string {
+  const first = parseHtml(screen.html).childNodes.find((node) => 'tagName' in node);
+  return first ? getAttr(first as never, EL_ID) : '';
+}
+
+/**
+ * A screen, rendered as the page it is.
+ *
+ * An iframe rather than markup in the editor's own document, for three
+ * reasons that all matter: nothing in a design can execute, the design's CSS
+ * cannot restyle the toolbar, and — the one that decides it — the editor's own
+ * stylesheet cannot leak into the design. A screen has to look here exactly as
+ * it will when it is built, and it cannot do that sharing a document with an
+ * app that has opinions about what a button looks like.
+ *
+ * Selection is wired by hand rather than with React: the elements live in
+ * another document, so the bridge is `data-el` — read the id off whatever was
+ * clicked, and the rest of the editor addresses it by that.
+ */
+function ScreenFrame({
+  design,
+  screen,
+  selectedElement,
+  onPick,
+  onPickScreen,
+}: {
+  design: DesignDocument;
+  screen: ScreenDesign;
+  selectedElement: string | null;
+  onPick: (id: string) => void;
+  onPickScreen: () => void;
+}) {
+  const frame = useRef<HTMLIFrameElement | null>(null);
+  const srcDoc = screenDocument(design, screen);
+
+  // Re-bind whenever the document is replaced: a fresh load is a fresh DOM,
+  // and the listeners went with the old one.
+  useEffect(() => {
+    const iframe = frame.current;
+    if (!iframe) return;
+
+    const bind = (): void => {
+      const doc = iframe.contentDocument;
+      if (!doc) return;
+
+      const click = (event: Event): void => {
+        onPickScreen();
+        // The innermost thing under the pointer wins, which is what clicking
+        // a button inside a card has to mean.
+        const target = (event.target as HTMLElement | null)?.closest?.('[data-el]');
+        const id = target?.getAttribute('data-el');
+        if (id) onPick(id);
+      };
+
+      doc.addEventListener('click', click);
+      return;
+    };
+
+    if (iframe.contentDocument?.readyState === 'complete') bind();
+    iframe.addEventListener('load', bind);
+    return () => iframe.removeEventListener('load', bind);
+  }, [srcDoc, onPick, onPickScreen]);
+
+  // Selection is chrome, not content: painting it by toggling a class inside
+  // the frame avoids reloading the whole document every time you click.
+  useEffect(() => {
+    const doc = frame.current?.contentDocument;
+    if (!doc) return;
+    for (const marked of doc.querySelectorAll('.dz-selected')) {
+      marked.classList.remove('dz-selected');
+    }
+    if (!selectedElement) return;
+    doc.querySelector(`[data-el="${CSS.escape(selectedElement)}"]`)?.classList.add('dz-selected');
+  }, [selectedElement, srcDoc]);
+
+  return (
+    <iframe
+      ref={frame}
+      className="design-artboard-frame"
+      title={screen.name}
+      // No allow-scripts: nothing in a design runs. allow-same-origin is what
+      // lets the editor reach in to resolve a click.
+      sandbox="allow-same-origin"
+      srcDoc={srcDoc}
+    />
   );
 }
 

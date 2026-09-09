@@ -1,29 +1,34 @@
 import { useState, type DragEvent } from 'react';
 import {
-  ELEMENT_CATALOG,
-  ELEMENT_CATEGORIES,
-  ELEMENT_TYPES,
-  elementLabel,
-  findElement,
-  isContainer,
-  type DesignElement,
-  type ElementType,
+  EL_ID,
+  factsOf,
+  getAttr,
+  isElement,
+  parseHtml,
+  type HtmlElement,
+  type HtmlNode,
   type ScreenDesign,
 } from '@diagram-plus/core/browser';
 import { separator, showContextMenu } from '../context-menu';
+import { SNIPPETS, SNIPPET_CATEGORIES, type Snippet } from '../design-snippets';
 import { store, useEditorState } from '../store';
 
 /**
  * The layers panel and the palette.
  *
  * The canvas is where a screen is judged; this is where it is *addressed*.
- * Nesting is the thing a wireframe editor has to make obvious and a canvas
- * never quite can — whether a button is inside the card or merely on top of
- * it is the difference between a design that builds and one that does not.
+ * Nesting is the thing a design editor has to make obvious and a canvas never
+ * quite can — whether a button is inside the card or merely on top of it is
+ * the difference between a design that builds and one that does not.
+ *
+ * It reads the screen's markup rather than a typed tree, so what it shows is
+ * the real document structure: the tags an implementer will see, not a
+ * vocabulary invented for the editor.
  */
 
 export function DesignLayers({ screen }: { screen: ScreenDesign | null }) {
   const { selectedElement } = useEditorState();
+  const roots = screen ? topLevel(screen.html) : [];
 
   return (
     <div className="design-layers">
@@ -33,19 +38,34 @@ export function DesignLayers({ screen }: { screen: ScreenDesign | null }) {
           <span className="label">Layers</span>
           {screen ? <span className="hint">{screen.name}</span> : null}
         </div>
-        {screen ? (
-          <LayerRow
-            element={screen.root}
-            screen={screen}
-            depth={0}
-            selectedId={selectedElement}
-          />
+        {screen && roots.length ? (
+          roots.map((element) => (
+            <LayerRow
+              key={getAttr(element, EL_ID)}
+              element={element}
+              screen={screen}
+              depth={0}
+              selectedId={selectedElement}
+            />
+          ))
         ) : (
-          <p className="hint">Pick an artboard to see what is on it.</p>
+          <p className="hint">
+            {screen ? 'This screen is empty. Drag something in.' : 'Pick an artboard to see what is on it.'}
+          </p>
         )}
       </div>
     </div>
   );
+}
+
+/** The outermost elements of a screen. */
+function topLevel(html: string): HtmlElement[] {
+  return parseHtml(html).childNodes.filter((node) => isElement(node as HtmlNode)) as HtmlElement[];
+}
+
+/** The elements directly inside one, skipping text and comments. */
+function childrenOf(element: HtmlElement): HtmlElement[] {
+  return element.childNodes.filter((node) => isElement(node as HtmlNode)) as HtmlElement[];
 }
 
 /* ------------------------------------------------------------------ *
@@ -59,69 +79,50 @@ function Palette({ screen }: { screen: ScreenDesign | null }) {
   /**
    * Where a click on the palette puts things.
    *
-   * Into the selected element when it can hold children, otherwise beside it,
-   * and failing that at the end of the screen. Dragging is the precise way;
-   * clicking is the fast way, and it should land somewhere sensible rather
-   * than always at the bottom of the page.
+   * Beside the selection if there is one, so placing three fields in a row
+   * does what it looks like it does; inside the screen otherwise.
    */
-  const add = (type: ElementType): void => {
+  const add = (snippet: Snippet): void => {
     if (!screen) return;
-    const selected = selectedElement ? findElement(screen.root, selectedElement) : null;
-
-    if (selected && isContainer(selected.element.type)) {
-      store.designEdit([{ op: 'add_element', screen: screen.id, type, parent: selected.element.id }]);
-      return;
-    }
-    if (selected?.parent) {
-      store.designEdit([
-        {
-          op: 'add_element',
-          screen: screen.id,
-          type,
-          parent: selected.parent.id,
-          index: selected.index + 1,
-        },
-      ]);
-      return;
-    }
-    store.designEdit([{ op: 'add_element', screen: screen.id, type }]);
+    store.designEdit([
+      {
+        op: 'insert_html',
+        screen: screen.id,
+        html: snippet.html,
+        target: selectedElement ?? undefined,
+        where: selectedElement ? 'after' : 'inside',
+      },
+    ]);
   };
 
   return (
     <div className="design-palette">
-      <div className="design-panel-head">
-        <button className="btn subtle icon" onClick={() => setOpen((value) => !value)}>
-          {open ? '▾' : '▸'}
-        </button>
+      <button className="design-panel-head" onClick={() => setOpen(!open)}>
+        <span className={`twisty${open ? ' open' : ''}`}>▾</span>
         <span className="label">Add</span>
-      </div>
+      </button>
+
       {open
-        ? ELEMENT_CATEGORIES.map((category) => (
-            <div key={category.id} className="design-palette-group">
-              <span className="design-palette-label">{category.label}</span>
+        ? SNIPPET_CATEGORIES.map((category) => (
+            <div key={category} className="design-palette-group">
+              <span className="design-palette-label">{category}</span>
               <div className="design-palette-items">
-                {ELEMENT_TYPES.filter((type) => ELEMENT_CATALOG[type].category === category.id).map(
-                  (type) => {
-                    const info = ELEMENT_CATALOG[type];
-                    return (
-                      <button
-                        key={type}
-                        className="design-palette-item"
-                        disabled={!screen}
-                        draggable={Boolean(screen)}
-                        onDragStart={(event: DragEvent) => {
-                          event.dataTransfer.setData('application/x-design-type', type);
-                          event.dataTransfer.effectAllowed = 'copy';
-                        }}
-                        onClick={() => add(type)}
-                        title={`${info.label} — ${info.description}\n\n${info.whenToUse}`}
-                      >
-                        <span aria-hidden="true">{info.icon}</span>
-                        {info.label}
-                      </button>
-                    );
-                  },
-                )}
+                {SNIPPETS.filter((s) => s.category === category).map((snippet) => (
+                  <button
+                    key={snippet.id}
+                    className="design-palette-item"
+                    title={`Add a ${snippet.label.toLowerCase()}`}
+                    draggable
+                    onDragStart={(event: DragEvent) => {
+                      event.dataTransfer.setData('application/x-design-type', snippet.id);
+                      event.dataTransfer.effectAllowed = 'copy';
+                    }}
+                    onClick={() => add(snippet)}
+                  >
+                    <span className="design-palette-icon">{snippet.icon}</span>
+                    {snippet.label}
+                  </button>
+                ))}
               </div>
             </div>
           ))
@@ -140,135 +141,119 @@ function LayerRow({
   depth,
   selectedId,
 }: {
-  element: DesignElement;
+  element: HtmlElement;
   screen: ScreenDesign;
   depth: number;
   selectedId: string | null;
 }) {
   const [collapsed, setCollapsed] = useState(false);
-  const info = ELEMENT_CATALOG[element.type];
-  const name = elementLabel(element.type, element.name, element.text);
-  const selected = selectedId === element.id;
-  const root = element.id === screen.root.id;
+  const facts = factsOf(element);
+  const children = childrenOf(element);
+  const selected = selectedId === facts.id;
+
+  /** Drop resolution, exactly as the canvas does it: inside, or beside. */
+  const onDrop = (event: DragEvent): void => {
+    const moved = event.dataTransfer.getData('application/x-design-element');
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!moved) {
+      const snippet = SNIPPETS.find(
+        (s) => s.id === event.dataTransfer.getData('application/x-design-type'),
+      );
+      if (!snippet) return;
+      store.designEdit([
+        { op: 'insert_html', screen: screen.id, html: snippet.html, target: facts.id, where: 'inside' },
+      ]);
+      return;
+    }
+    if (moved === facts.id) return;
+
+    store.designEdit([
+      { op: 'move_node', screen: screen.id, element: moved, parent: facts.id },
+    ]);
+  };
 
   return (
     <>
       <div
         className={`design-layer${selected ? ' selected' : ''}`}
-        style={{ paddingLeft: 6 + depth * 14 }}
-        onClick={() => store.selectElement(element.id, screen.id)}
-        draggable={!root}
-        onDragStart={(event) => {
-          event.stopPropagation();
-          event.dataTransfer.setData('application/x-design-element', element.id);
+        style={{ paddingLeft: 8 + depth * 14 }}
+        draggable
+        onDragStart={(event: DragEvent) => {
+          event.dataTransfer.setData('application/x-design-element', facts.id);
+          event.dataTransfer.effectAllowed = 'move';
         }}
-        onDragOver={(event) => {
-          if (!event.dataTransfer.types.includes('application/x-design-element')) return;
-          event.preventDefault();
-        }}
-        onDrop={(event) => {
-          const moved = event.dataTransfer.getData('application/x-design-element');
-          if (!moved || moved === element.id) return;
-          event.preventDefault();
-          event.stopPropagation();
-
-          // Onto a container goes inside it; onto anything else goes after it.
-          if (isContainer(element.type)) {
-            store.designEdit([
-              { op: 'move_element', screen: screen.id, element: moved, parent: element.id },
-            ]);
-            return;
+        onDragOver={(event: DragEvent) => {
+          if (
+            event.dataTransfer.types.includes('application/x-design-element') ||
+            event.dataTransfer.types.includes('application/x-design-type')
+          ) {
+            event.preventDefault();
           }
-          const found = findElement(screen.root, element.id);
-          if (!found?.parent) return;
-          store.designEdit([
-            {
-              op: 'move_element',
-              screen: screen.id,
-              element: moved,
-              parent: found.parent.id,
-              index: found.index + 1,
-            },
-          ]);
         }}
+        onDrop={onDrop}
+        onClick={() => store.selectElement(facts.id, screen.id)}
         onContextMenu={(event) =>
           showContextMenu(event, [
-            { kind: 'heading', label: `${name} — ${info.label}` },
+            { kind: 'heading', label: facts.label },
             {
-              label: element.hidden ? 'Show' : 'Hide',
+              label: facts.hidden ? 'Show it' : 'Hide it',
               onSelect: () =>
                 store.designEdit([
                   {
-                    op: 'update_element',
+                    op: 'set_attribute',
                     screen: screen.id,
-                    element: element.id,
-                    hidden: !element.hidden,
+                    element: facts.id,
+                    name: 'hidden',
+                    value: facts.hidden ? null : '',
                   },
                 ]),
             },
             {
-              label: element.locked ? 'Unlock' : 'Lock',
-              hint: 'A locked element cannot be dragged on the canvas',
+              label: 'Duplicate',
               onSelect: () =>
                 store.designEdit([
-                  {
-                    op: 'update_element',
-                    screen: screen.id,
-                    element: element.id,
-                    locked: !element.locked,
-                  },
+                  { op: 'duplicate_node', screen: screen.id, element: facts.id },
                 ]),
             },
             separator,
             {
-              label: 'Duplicate',
-              disabled: root,
-              onSelect: () =>
-                store.designEdit([
-                  { op: 'duplicate_element', screen: screen.id, element: element.id },
-                ]),
-            },
-            {
               label: 'Remove',
-              disabled: root,
-              hint: root ? 'The screen itself' : undefined,
               onSelect: () =>
-                store.designEdit([
-                  { op: 'remove_element', screen: screen.id, element: element.id },
-                ]),
+                store.designEdit([{ op: 'remove_node', screen: screen.id, element: facts.id }]),
             },
           ])
         }
       >
-        {element.children.length ? (
-          <button
-            className="design-layer-twist"
+        {children.length ? (
+          <span
+            className={`twisty${collapsed ? '' : ' open'}`}
             onClick={(event) => {
               event.stopPropagation();
-              setCollapsed((value) => !value);
+              setCollapsed(!collapsed);
             }}
           >
-            {collapsed ? '▸' : '▾'}
-          </button>
+            ▾
+          </span>
         ) : (
-          <span className="design-layer-twist" />
+          <span className="twisty spacer" />
         )}
-        <span className="design-layer-icon" aria-hidden="true">
-          {info.icon}
-        </span>
-        <span className="design-layer-name">{name}</span>
-        {element.binding ? <span className="design-layer-tag">bound</span> : null}
-        {element.action || element.navigatesTo ? (
-          <span className="design-layer-tag act">acts</span>
-        ) : null}
-        {element.hidden ? <span className="design-layer-tag">hidden</span> : null}
+
+        <code className="design-layer-tag">{facts.tag}</code>
+        <span className="design-layer-name">{facts.text || facts.classes.join('.')}</span>
+
+        {facts.binding ? <span className="design-layer-flag">bound</span> : null}
+        {facts.action || facts.navigatesTo ? <span className="design-layer-flag">acts</span> : null}
+        {facts.repeat ? <span className="design-layer-flag">×{facts.repeat.count}</span> : null}
+        {facts.hidden ? <span className="design-layer-flag">hidden</span> : null}
       </div>
 
       {collapsed
         ? null
-        : element.children.map((child) => (
+        : children.map((child) => (
             <LayerRow
-              key={child.id}
+              key={getAttr(child, EL_ID)}
               element={child}
               screen={screen}
               depth={depth + 1}

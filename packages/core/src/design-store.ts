@@ -1,5 +1,7 @@
 import type { Diagram } from './diagram.js';
 import { createDesignDocument } from './design-factory.js';
+import { normalizeHtml } from './design-html.js';
+import { relaxArtboards } from './design-ops.js';
 import { deriveDesign, reconcileDesign } from './design-sync.js';
 import {
   DesignDocumentSchema,
@@ -28,6 +30,35 @@ import {
  * The write queue, the revision check and the atomic write are the same
  * bargain as for diagrams: two writers, one file, last-read-wins refused.
  */
+
+/**
+ * Put a document read off disk back inside its own rules.
+ *
+ * Everything written from here on is sanitised and identified on the way in,
+ * and no two artboards are left on top of each other. But a file already on
+ * disk may predate those rules, may have been migrated from the typed-tree
+ * format, or may have been hand-edited — so the same treatment is applied on
+ * the way in, and the editor, the spec and the MCP tools all see a document
+ * that is true rather than each working around one that is not.
+ *
+ * Elements *within* a screen can no longer overlap by accident: the browser
+ * lays them out. That whole class of repair went away with the format.
+ *
+ * Nothing is written here. The next real edit persists the repair.
+ */
+function repairDesign(document: DesignDocument): DesignDocument {
+  let changed = false;
+  const screens = document.screens.map((screen) => {
+    const { html, removed, minted } = normalizeHtml(screen.html);
+    if (!removed.length && !minted) return screen;
+    changed = true;
+    return { ...screen, html };
+  });
+
+  const relaxed = relaxArtboards(changed ? screens : document.screens);
+  if (!changed && !relaxed.moved.length) return document;
+  return { ...document, screens: relaxed.screens };
+}
 
 export class DesignNotFoundError extends Error {
   constructor(public readonly slug: string) {
@@ -91,7 +122,8 @@ export class DesignStore {
     }
     const document = parseDesign(raw);
     // The filename is authoritative, so a renamed file still resolves.
-    return document.slug === slug ? document : { ...document, slug };
+    const named = document.slug === slug ? document : { ...document, slug };
+    return repairDesign(named);
   }
 
   async read(slug: string): Promise<DesignDocument> {

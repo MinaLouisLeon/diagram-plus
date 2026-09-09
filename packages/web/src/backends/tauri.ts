@@ -8,7 +8,6 @@ import {
   DiagramStore,
   EDGE_TYPES,
   EDGE_TYPE_INFO,
-  ELEMENT_CATEGORIES,
   RevisionConflictError,
   applyBatch,
   assignDiagramContent,
@@ -17,7 +16,6 @@ import {
   designProgress,
   diffDesign,
   editDesign,
-  elementCatalogList,
   exportDiagram,
   generateSpec,
   importDiagram,
@@ -151,8 +149,6 @@ const api: Api = {
       colors: Object.fromEntries(
         Object.entries(BLOCK_CATALOG).map(([type, info]) => [type, info.color]),
       ),
-      elementTypes: elementCatalogList(),
-      elementCategories: ELEMENT_CATEGORIES,
     };
   },
 
@@ -319,10 +315,14 @@ const api: Api = {
   },
 
   async designOps(slug, operations: DesignOperation[], layout = false) {
-    let outcome: { applied: number; errors: unknown[] } = { applied: 0, errors: [] };
+    let outcome: { applied: number; errors: unknown[]; corrections: string[] } = {
+      applied: 0,
+      errors: [],
+      corrections: [],
+    };
     const result = await writeDesign(slug, (draft) => {
       const edit = editDesign(draft, operations);
-      outcome = { applied: edit.applied, errors: edit.errors };
+      outcome = { applied: edit.applied, errors: edit.errors, corrections: edit.corrections };
       Object.assign(draft, edit.document);
       if (layout) Object.assign(draft, layoutDesign(draft));
     });
