@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type DragEvent,
@@ -22,7 +23,7 @@ import { screenDocument } from '../design-css';
 import { MEASURED_PROPERTIES } from '../design-style';
 import { snippetById } from '../design-snippets';
 import { showContextMenu, separator } from '../context-menu';
-import { store, useEditorState } from '../store';
+import { store, useEditor, useEditorState } from '../store';
 
 /**
  * The design canvas.
@@ -491,8 +492,6 @@ function Artboard({
           screen={screen}
           zoom={zoom}
           selectedElement={selectedElement}
-          onPick={(id) => store.selectElement(id, screen.id)}
-          onPickScreen={() => store.selectScreen(screen.id)}
         />
       </div>
 
@@ -541,123 +540,160 @@ function ScreenFrame({
   screen,
   zoom,
   selectedElement,
-  onPick,
-  onPickScreen,
 }: {
   design: DesignDocument;
   screen: ScreenDesign;
   zoom: number;
   selectedElement: string | null;
-  onPick: (id: string) => void;
-  onPickScreen: () => void;
 }) {
   const frame = useRef<HTMLIFrameElement | null>(null);
-  const srcDoc = screenDocument(design, screen);
 
   /**
-   * Read the selected element back off the artboard.
+   * The page inside the artboard, rebuilt only when it has actually changed.
    *
-   * The document records what somebody overrode; only the browser knows what
-   * an element actually *is*, because nearly all of it comes from the tokens
-   * and the shared stylesheet. So the panel's font size, its padding and the
-   * handles drawn around a selection all come from here — which is what makes
-   * the properties panel a picture of the screen rather than a list of
-   * exceptions to it.
+   * A document is five to ten kilobytes of string, and a design worth showing
+   * a client is forty artboards. Assembling all forty on every render — and
+   * the canvas re-renders on every tick of a pan — is most of a frame's budget
+   * spent producing forty strings identical to the forty already on screen.
    */
-  const measure = useCallback((): void => {
-    const doc = frame.current?.contentDocument;
-    const view = doc?.defaultView;
-    if (!doc || !view) return;
-    if (!selectedElement) {
-      if (store.current.selectedScreen === screen.id) store.measureElement(null);
-      return;
-    }
+  const srcDoc = useMemo(
+    () => screenDocument(design, screen),
+    [design.system, design.css, screen.html, screen.css, screen.background, screen.name],
+  );
 
-    const found = doc.querySelector(`[data-el="${CSS.escape(selectedElement)}"]`);
-    if (!(found instanceof view.HTMLElement)) {
-      store.measureElement(null);
-      return;
-    }
+  /**
+   * The latest selection, where a stable callback can read it.
+   *
+   * Everything below is deliberately identity-stable, because these effects
+   * reach into another document and one of them writes to the store. An effect
+   * that re-runs whenever a prop closure is recreated would do that work on
+   * every render of the canvas — and, since measuring causes a render, would
+   * be measuring in a circle.
+   */
+  const latest = useRef({ selectedElement, screenId: screen.id });
+  latest.current = { selectedElement, screenId: screen.id };
 
-    const style = view.getComputedStyle(found);
-    const computed: Record<string, string> = {};
-    for (const property of MEASURED_PROPERTIES) {
-      computed[property] = style.getPropertyValue(property).trim();
-    }
+  /** Whether this frame has ever painted a selection, so a clear can be skipped. */
+  const painted = useRef(false);
 
-    const box = found.getBoundingClientRect();
-    store.measureElement({
-      screen: screen.id,
-      element: selectedElement,
-      box: {
-        x: box.left + view.scrollX,
-        y: box.top + view.scrollY,
-        width: box.width,
-        height: box.height,
-      },
-      computed,
+  /**
+   * Paint the selection and read the element back, once per animation frame.
+   *
+   * Both halves reach across into the iframe's document: painting invalidates
+   * its style, measuring forces its layout. Doing that once per selection is
+   * nothing; doing it once per render, in forty documents, is what made the
+   * window stop answering. Coalescing to a frame means a burst of renders
+   * costs one pass, and the guard means a pass can never schedule another.
+   */
+  const pending = useRef(0);
+  const sync = useCallback((): void => {
+    if (pending.current) return;
+    pending.current = requestAnimationFrame(() => {
+      pending.current = 0;
+
+      const doc = frame.current?.contentDocument;
+      const view = doc?.defaultView;
+      if (!doc || !view) return;
+      const { selectedElement: id, screenId } = latest.current;
+
+      // Selection is chrome, not content: a class toggled inside the frame,
+      // never anything written into the design.
+      if (painted.current) {
+        for (const marked of doc.querySelectorAll('.dz-selected')) {
+          marked.classList.remove('dz-selected');
+        }
+        painted.current = false;
+      }
+
+      if (!id) {
+        // Only the artboard being worked on may clear the measurement; the
+        // other thirty-nine have nothing to say about it.
+        if (store.current.selectedScreen === screenId) store.measureElement(null);
+        return;
+      }
+
+      const found = doc.querySelector(`[data-el="${CSS.escape(id)}"]`);
+      if (!(found instanceof view.HTMLElement)) {
+        store.measureElement(null);
+        return;
+      }
+      found.classList.add('dz-selected');
+      painted.current = true;
+
+      // The document records what somebody overrode; only the browser knows
+      // what an element actually *is*, because nearly all of it comes from the
+      // tokens and the shared stylesheet. So the panel's font size, its
+      // padding and the handles drawn around a selection all come from here.
+      const style = view.getComputedStyle(found);
+      const computed: Record<string, string> = {};
+      for (const property of MEASURED_PROPERTIES) {
+        computed[property] = style.getPropertyValue(property).trim();
+      }
+
+      const box = found.getBoundingClientRect();
+      store.measureElement({
+        screen: screenId,
+        element: id,
+        box: {
+          x: box.left + view.scrollX,
+          y: box.top + view.scrollY,
+          width: box.width,
+          height: box.height,
+        },
+        computed,
+      });
     });
-  }, [screen.id, selectedElement]);
+  }, []);
+
+  useEffect(() => () => cancelAnimationFrame(pending.current), []);
 
   /**
-   * Mark what is selected inside the frame.
+   * Wire the document up, once for each document.
    *
-   * Selection is chrome, not content, so it is a class toggled in the frame
-   * rather than anything in the document — clicking something must not rewrite
-   * the screen. It has to be re-applied after every reload as well as every
-   * click: an edit replaces the whole document, and an outline painted onto
-   * the document that edit threw away leaves you working on a screen with
-   * nothing visibly selected.
+   * A fresh load is a fresh DOM and the listener went with the old one — but
+   * the listener has to come back off again too. Bound on every render and
+   * never removed, one document ends a minute's panning holding a thousand
+   * copies of this handler, and the click that follows runs all thousand.
    */
-  const paint = useCallback((): void => {
-    const doc = frame.current?.contentDocument;
-    if (!doc) return;
-    for (const marked of doc.querySelectorAll('.dz-selected')) {
-      marked.classList.remove('dz-selected');
-    }
-    if (!selectedElement) return;
-    doc.querySelector(`[data-el="${CSS.escape(selectedElement)}"]`)?.classList.add('dz-selected');
-  }, [selectedElement]);
-
-  // Re-bind whenever the document is replaced: a fresh load is a fresh DOM,
-  // and the listeners went with the old one.
   useEffect(() => {
     const iframe = frame.current;
     if (!iframe) return;
+    let bound: Document | null = null;
+
+    const click = (event: Event): void => {
+      // The innermost thing under the pointer wins, which is what clicking a
+      // button inside a card has to mean. A click that lands on nothing
+      // addressable still picks the artboard.
+      const target = (event.target as HTMLElement | null)?.closest?.('[data-el]');
+      const id = target?.getAttribute('data-el');
+      if (id) store.selectElement(id, screen.id);
+      else store.selectScreen(screen.id);
+    };
 
     const bind = (): void => {
-      const doc = iframe.contentDocument;
-      if (!doc) return;
-
-      const click = (event: Event): void => {
-        onPickScreen();
-        // The innermost thing under the pointer wins, which is what clicking
-        // a button inside a card has to mean.
-        const target = (event.target as HTMLElement | null)?.closest?.('[data-el]');
-        const id = target?.getAttribute('data-el');
-        if (id) onPick(id);
-      };
-
-      doc.addEventListener('click', click);
-      // A fresh document has just been laid out. The selection has to be
-      // painted onto it again, and any measurement taken against the old one
-      // describes markup that no longer exists.
-      paint();
-      measure();
-      return;
+      bound?.removeEventListener('click', click);
+      bound = iframe.contentDocument;
+      bound?.addEventListener('click', click);
+      // A fresh document has just been laid out, and the selection painted on
+      // the one it replaced went with it.
+      painted.current = false;
+      sync();
     };
 
     if (iframe.contentDocument?.readyState === 'complete') bind();
     iframe.addEventListener('load', bind);
-    return () => iframe.removeEventListener('load', bind);
-  }, [srcDoc, onPick, onPickScreen, measure, paint]);
+    return () => {
+      bound?.removeEventListener('click', click);
+      iframe.removeEventListener('load', bind);
+    };
+  }, [srcDoc, screen.id, sync]);
 
   // Clicking something repaints without reloading, which is what keeps
-  // selection instant on a screen of any size.
+  // selection instant on a screen of any size. Nothing the sync itself changes
+  // appears here, so a measurement can never ask for another one.
   useEffect(() => {
-    paint();
-    measure();
-  }, [selectedElement, srcDoc, measure, paint]);
+    sync();
+  }, [selectedElement, srcDoc, sync]);
 
   /** The element inside the frame, for a drag that wants to show its work. */
   const liveElement = useCallback((): HTMLElement | null => {
@@ -679,13 +715,15 @@ function ScreenFrame({
         sandbox="allow-same-origin"
         srcDoc={srcDoc}
       />
-      <ElementHandles
-        screen={screen}
-        element={selectedElement}
-        zoom={zoom}
-        liveElement={liveElement}
-        onSettled={measure}
-      />
+      {selectedElement ? (
+        <ElementHandles
+          screen={screen}
+          element={selectedElement}
+          zoom={zoom}
+          liveElement={liveElement}
+          onSettled={sync}
+        />
+      ) : null}
     </>
   );
 }
@@ -708,6 +746,10 @@ type Grip = 'e' | 's' | 'se';
  * frame, so the screen reflows under the drag as it will when it is built.
  * Nothing reaches the document until the button comes up, which is what keeps
  * one drag to one undo step.
+ *
+ * It is rendered only for the artboard holding the selection, and it watches
+ * one field rather than the whole store: forty artboards re-rendering on every
+ * keystroke elsewhere in the editor is a cost with nothing to show for it.
  */
 function ElementHandles({
   screen,
@@ -717,12 +759,12 @@ function ElementHandles({
   onSettled,
 }: {
   screen: ScreenDesign;
-  element: string | null;
+  element: string;
   zoom: number;
   liveElement: () => HTMLElement | null;
   onSettled: () => void;
 }) {
-  const { measured } = useEditorState();
+  const measured = useEditor((state) => state.measured);
   const [dragging, setDragging] = useState<{ width: number; height: number } | null>(null);
   const grip = useRef<{
     grip: Grip;
@@ -764,7 +806,7 @@ function ElementHandles({
       grip.current = null;
       const size = dragging;
       setDragging(null);
-      if (!from || !element) return;
+      if (!from) return;
 
       // A click on a handle that moved nothing must not light the Save button,
       // exactly as a click on an artboard's title bar must not.
@@ -797,7 +839,7 @@ function ElementHandles({
     };
   }, [zoom, dragging, element, screen.id, onSettled]);
 
-  if (!box || !element) return null;
+  if (!box) return null;
 
   const start = (which: Grip) => (event: ReactMouseEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
