@@ -20,6 +20,11 @@ import {
   type HtmlFragment,
 } from './design-html.js';
 import {
+  mergeInlineStyle,
+  parseInlineStyle,
+  type StyleDeclarations,
+} from './design-style.js';
+import {
   DesignSystemSchema,
   DEVICE_FRAMES,
   ScreenDesignSchema,
@@ -73,11 +78,22 @@ export interface ElementFacts {
   label: string;
   text: string;
   classes: string[];
+  /**
+   * What the element says about its own look, from its `style` attribute.
+   *
+   * The stylesheet is still where a look belongs, and this is where the
+   * exceptions live: the one heading somebody wanted bigger, the one card they
+   * wanted grey. The properties panel writes these, and reads them back to
+   * show which of its fields are overridden and which are only inherited.
+   */
+  style: StyleDeclarations;
   binding: string;
   action: string;
   navigatesTo: string;
   component: string;
   visibleWhen: string;
+  /** Anything the markup cannot say, written for whoever builds it. */
+  note: string;
   repeat: { over: string; count: number } | null;
   required: boolean;
   disabled: boolean;
@@ -98,11 +114,13 @@ export function factsOf(element: HtmlElement): ElementFacts {
     label: name || words || element.tagName.toLowerCase(),
     text: words,
     classes: getAttr(element, 'class').split(/\s+/).filter(Boolean),
+    style: parseInlineStyle(getAttr(element, 'style')),
     binding: getAttr(element, 'data-binding'),
     action: getAttr(element, 'data-action'),
     navigatesTo: getAttr(element, 'data-navigates-to'),
     component: getAttr(element, 'data-component'),
     visibleWhen: getAttr(element, 'data-visible-when'),
+    note: getAttr(element, 'data-note'),
     repeat: repeatOver
       ? { over: repeatOver, count: Number(getAttr(element, 'data-repeat-count')) || 3 }
       : null,
@@ -179,6 +197,26 @@ export type DesignOperation =
     }
   /** Set or clear one attribute — `data-binding`, `class`, `placeholder`. */
   | { op: 'set_attribute'; screen: string; element: string; name: string; value: string | null }
+  /**
+   * Restyle one element: size, colour, type, spacing, border.
+   *
+   * Declarations are merged over whatever the element already carries, and a
+   * null value takes one back off — so a batch says what it wants to change
+   * and nothing else. `replace` throws away every existing override first,
+   * which is what "reset this element" means.
+   *
+   * Write values against the tokens where there is one — `var(--color-accent)`
+   * rather than `#2563eb` — or an element nudged by hand stops following the
+   * design system the moment the system changes. Anything that belongs to
+   * every button belongs in the stylesheet instead; this is for exceptions.
+   */
+  | {
+      op: 'set_style';
+      screen: string;
+      element: string;
+      styles: Record<string, string | null>;
+      replace?: boolean;
+    }
   /** Replace the words on an element, leaving anything nested inside it alone. */
   | { op: 'set_text'; screen: string; element: string; text: string }
   | { op: 'move_node'; screen: string; element: string; parent: string; index?: number }
@@ -482,6 +520,18 @@ export function editDesign(
             }
             if (operation.value === null) removeAttr(node, operation.name);
             else setAttr(node, operation.name, operation.value);
+          });
+          break;
+        }
+
+        case 'set_style': {
+          withHtml(operation.screen, (fragment) => {
+            const node = nodeOf(fragment, operation.element);
+            const style = mergeInlineStyle(getAttr(node, 'style'), operation.styles, {
+              replace: operation.replace,
+            });
+            if (style) setAttr(node, 'style', style);
+            else removeAttr(node, 'style');
           });
           break;
         }

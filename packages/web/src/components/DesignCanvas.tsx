@@ -19,6 +19,7 @@ import {
   type ScreenDesign,
 } from '@diagram-plus/core/browser';
 import { screenDocument } from '../design-css';
+import { MEASURED_PROPERTIES } from '../design-style';
 import { snippetById } from '../design-snippets';
 import { showContextMenu, separator } from '../context-menu';
 import { store, useEditorState } from '../store';
@@ -488,6 +489,7 @@ function Artboard({
         <ScreenFrame
           design={design}
           screen={screen}
+          zoom={zoom}
           selectedElement={selectedElement}
           onPick={(id) => store.selectElement(id, screen.id)}
           onPickScreen={() => store.selectScreen(screen.id)}
@@ -537,18 +539,85 @@ function outermostId(screen: ScreenDesign): string {
 function ScreenFrame({
   design,
   screen,
+  zoom,
   selectedElement,
   onPick,
   onPickScreen,
 }: {
   design: DesignDocument;
   screen: ScreenDesign;
+  zoom: number;
   selectedElement: string | null;
   onPick: (id: string) => void;
   onPickScreen: () => void;
 }) {
   const frame = useRef<HTMLIFrameElement | null>(null);
   const srcDoc = screenDocument(design, screen);
+
+  /**
+   * Read the selected element back off the artboard.
+   *
+   * The document records what somebody overrode; only the browser knows what
+   * an element actually *is*, because nearly all of it comes from the tokens
+   * and the shared stylesheet. So the panel's font size, its padding and the
+   * handles drawn around a selection all come from here — which is what makes
+   * the properties panel a picture of the screen rather than a list of
+   * exceptions to it.
+   */
+  const measure = useCallback((): void => {
+    const doc = frame.current?.contentDocument;
+    const view = doc?.defaultView;
+    if (!doc || !view) return;
+    if (!selectedElement) {
+      if (store.current.selectedScreen === screen.id) store.measureElement(null);
+      return;
+    }
+
+    const found = doc.querySelector(`[data-el="${CSS.escape(selectedElement)}"]`);
+    if (!(found instanceof view.HTMLElement)) {
+      store.measureElement(null);
+      return;
+    }
+
+    const style = view.getComputedStyle(found);
+    const computed: Record<string, string> = {};
+    for (const property of MEASURED_PROPERTIES) {
+      computed[property] = style.getPropertyValue(property).trim();
+    }
+
+    const box = found.getBoundingClientRect();
+    store.measureElement({
+      screen: screen.id,
+      element: selectedElement,
+      box: {
+        x: box.left + view.scrollX,
+        y: box.top + view.scrollY,
+        width: box.width,
+        height: box.height,
+      },
+      computed,
+    });
+  }, [screen.id, selectedElement]);
+
+  /**
+   * Mark what is selected inside the frame.
+   *
+   * Selection is chrome, not content, so it is a class toggled in the frame
+   * rather than anything in the document — clicking something must not rewrite
+   * the screen. It has to be re-applied after every reload as well as every
+   * click: an edit replaces the whole document, and an outline painted onto
+   * the document that edit threw away leaves you working on a screen with
+   * nothing visibly selected.
+   */
+  const paint = useCallback((): void => {
+    const doc = frame.current?.contentDocument;
+    if (!doc) return;
+    for (const marked of doc.querySelectorAll('.dz-selected')) {
+      marked.classList.remove('dz-selected');
+    }
+    if (!selectedElement) return;
+    doc.querySelector(`[data-el="${CSS.escape(selectedElement)}"]`)?.classList.add('dz-selected');
+  }, [selectedElement]);
 
   // Re-bind whenever the document is replaced: a fresh load is a fresh DOM,
   // and the listeners went with the old one.
@@ -570,36 +639,205 @@ function ScreenFrame({
       };
 
       doc.addEventListener('click', click);
+      // A fresh document has just been laid out. The selection has to be
+      // painted onto it again, and any measurement taken against the old one
+      // describes markup that no longer exists.
+      paint();
+      measure();
       return;
     };
 
     if (iframe.contentDocument?.readyState === 'complete') bind();
     iframe.addEventListener('load', bind);
     return () => iframe.removeEventListener('load', bind);
-  }, [srcDoc, onPick, onPickScreen]);
+  }, [srcDoc, onPick, onPickScreen, measure, paint]);
 
-  // Selection is chrome, not content: painting it by toggling a class inside
-  // the frame avoids reloading the whole document every time you click.
+  // Clicking something repaints without reloading, which is what keeps
+  // selection instant on a screen of any size.
   useEffect(() => {
+    paint();
+    measure();
+  }, [selectedElement, srcDoc, measure, paint]);
+
+  /** The element inside the frame, for a drag that wants to show its work. */
+  const liveElement = useCallback((): HTMLElement | null => {
     const doc = frame.current?.contentDocument;
-    if (!doc) return;
-    for (const marked of doc.querySelectorAll('.dz-selected')) {
-      marked.classList.remove('dz-selected');
-    }
-    if (!selectedElement) return;
-    doc.querySelector(`[data-el="${CSS.escape(selectedElement)}"]`)?.classList.add('dz-selected');
-  }, [selectedElement, srcDoc]);
+    const view = doc?.defaultView;
+    if (!doc || !view || !selectedElement) return null;
+    const found = doc.querySelector(`[data-el="${CSS.escape(selectedElement)}"]`);
+    return found instanceof view.HTMLElement ? found : null;
+  }, [selectedElement]);
 
   return (
-    <iframe
-      ref={frame}
-      className="design-artboard-frame"
-      title={screen.name}
-      // No allow-scripts: nothing in a design runs. allow-same-origin is what
-      // lets the editor reach in to resolve a click.
-      sandbox="allow-same-origin"
-      srcDoc={srcDoc}
-    />
+    <>
+      <iframe
+        ref={frame}
+        className="design-artboard-frame"
+        title={screen.name}
+        // No allow-scripts: nothing in a design runs. allow-same-origin is what
+        // lets the editor reach in to resolve a click.
+        sandbox="allow-same-origin"
+        srcDoc={srcDoc}
+      />
+      <ElementHandles
+        screen={screen}
+        element={selectedElement}
+        zoom={zoom}
+        liveElement={liveElement}
+        onSettled={measure}
+      />
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Sizing an element by eye
+ * ------------------------------------------------------------------ */
+
+type Grip = 'e' | 's' | 'se';
+
+/**
+ * The handles around the selected element.
+ *
+ * Typing 240 into a box is a fine way to record a width and a poor way to find
+ * one. These are drawn over the iframe rather than inside it — the design's own
+ * document stays exactly what will be built, with no editor furniture in it —
+ * and they write the same `set_style` operation the properties panel does.
+ *
+ * While the pointer is down the size goes straight onto the element in the
+ * frame, so the screen reflows under the drag as it will when it is built.
+ * Nothing reaches the document until the button comes up, which is what keeps
+ * one drag to one undo step.
+ */
+function ElementHandles({
+  screen,
+  element,
+  zoom,
+  liveElement,
+  onSettled,
+}: {
+  screen: ScreenDesign;
+  element: string | null;
+  zoom: number;
+  liveElement: () => HTMLElement | null;
+  onSettled: () => void;
+}) {
+  const { measured } = useEditorState();
+  const [dragging, setDragging] = useState<{ width: number; height: number } | null>(null);
+  const grip = useRef<{
+    grip: Grip;
+    startX: number;
+    startY: number;
+    width: number;
+    height: number;
+    node: HTMLElement;
+  } | null>(null);
+
+  const box =
+    measured && measured.element === element && measured.screen === screen.id ? measured.box : null;
+
+  useEffect(() => {
+    if (!grip.current) return;
+
+    const move = (event: MouseEvent): void => {
+      const from = grip.current;
+      if (!from) return;
+      // The canvas is scaled, so a pointer that moved 100 screen pixels moved
+      // 100/zoom design pixels. Without this the element runs off the cursor.
+      const next = {
+        width:
+          from.grip === 's'
+            ? Math.round(from.width)
+            : Math.max(8, Math.round(from.width + (event.clientX - from.startX) / zoom)),
+        height:
+          from.grip === 'e'
+            ? Math.round(from.height)
+            : Math.max(8, Math.round(from.height + (event.clientY - from.startY) / zoom)),
+      };
+      if (from.grip !== 's') from.node.style.width = `${next.width}px`;
+      if (from.grip !== 'e') from.node.style.height = `${next.height}px`;
+      setDragging(next);
+    };
+
+    const up = (): void => {
+      const from = grip.current;
+      grip.current = null;
+      const size = dragging;
+      setDragging(null);
+      if (!from || !element) return;
+
+      // A click on a handle that moved nothing must not light the Save button,
+      // exactly as a click on an artboard's title bar must not.
+      const still =
+        !size ||
+        (size.width === Math.round(from.width) && size.height === Math.round(from.height));
+      if (still) {
+        onSettled();
+        return;
+      }
+
+      store.designEdit([
+        {
+          op: 'set_style',
+          screen: screen.id,
+          element,
+          styles: {
+            ...(from.grip === 's' ? {} : { width: `${size.width}px` }),
+            ...(from.grip === 'e' ? {} : { height: `${size.height}px` }),
+          },
+        },
+      ]);
+    };
+
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    return () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+  }, [zoom, dragging, element, screen.id, onSettled]);
+
+  if (!box || !element) return null;
+
+  const start = (which: Grip) => (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    event.preventDefault();
+    const node = liveElement();
+    if (!node) return;
+    grip.current = {
+      grip: which,
+      startX: event.clientX,
+      startY: event.clientY,
+      width: box.width,
+      height: box.height,
+      node,
+    };
+    setDragging({ width: Math.round(box.width), height: Math.round(box.height) });
+  };
+
+  const size = dragging ?? { width: Math.round(box.width), height: Math.round(box.height) };
+  // Handles keep their size on screen however far the canvas is zoomed out —
+  // at 20% an unscaled grip is three pixels of nothing to aim at.
+  const grips: Grip[] = ['e', 's', 'se'];
+
+  return (
+    <div
+      className="dz-handles"
+      style={{ left: box.x, top: box.y, width: size.width, height: size.height }}
+    >
+      {grips.map((which) => (
+        <div
+          key={which}
+          className={`dz-grip ${which}`}
+          style={{ transform: `scale(${1 / zoom})` }}
+          onMouseDown={start(which)}
+        />
+      ))}
+      <span className="dz-handles-size" style={{ transform: `scale(${1 / zoom})` }}>
+        {size.width} × {size.height}
+      </span>
+    </div>
   );
 }
 

@@ -9,8 +9,12 @@ import {
   editDesign,
   factsOf,
   findHtml,
+  cssLength,
+  formatInlineStyle,
   layoutDesign,
+  lengthNumber,
   normalizeHtml,
+  parseInlineStyle,
   parseDesign,
   parseHtml,
   reconcileDesign,
@@ -729,5 +733,152 @@ describe('the file format', () => {
     // And it is real markup, not a div for every element.
     expect(screen.html).toContain('<button');
     expect(screen.html).toContain('<input');
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Styling one element
+ * ------------------------------------------------------------------ */
+
+describe('changing what one element looks like', () => {
+  /** A screen with one addressable button on it. */
+  function withButton(html = '<main><button data-el="els_go">Go</button></main>') {
+    return apply(deriveDesign(shop()), { op: 'set_html', screen: 'Login', html }).document;
+  }
+
+  function buttonHtml(document: DesignDocument): string {
+    return screenNamed(document, 'Login').html;
+  }
+
+  it('merges declarations onto the element, and takes them back off one at a time', () => {
+    const styled = apply(withButton(), {
+      op: 'set_style',
+      screen: 'Login',
+      element: 'els_go',
+      styles: { 'font-size': '20px', color: 'var(--color-accent)' },
+    }).document;
+    expect(buttonHtml(styled)).toContain('font-size: 20px');
+    expect(buttonHtml(styled)).toContain('color: var(--color-accent)');
+
+    // A second edit says only what it changes; the first one survives it.
+    const wider = apply(styled, {
+      op: 'set_style',
+      screen: 'Login',
+      element: 'els_go',
+      styles: { width: '240px' },
+    }).document;
+    expect(buttonHtml(wider)).toContain('font-size: 20px');
+    expect(buttonHtml(wider)).toContain('width: 240px');
+
+    const unstyled = apply(wider, {
+      op: 'set_style',
+      screen: 'Login',
+      element: 'els_go',
+      styles: { 'font-size': null },
+    }).document;
+    expect(buttonHtml(unstyled)).not.toContain('font-size');
+    expect(buttonHtml(unstyled)).toContain('width: 240px');
+  });
+
+  it('drops the style attribute entirely once the last override goes', () => {
+    const styled = apply(withButton(), {
+      op: 'set_style',
+      screen: 'Login',
+      element: 'els_go',
+      styles: { opacity: '0.5' },
+    }).document;
+    const cleared = apply(styled, {
+      op: 'set_style',
+      screen: 'Login',
+      element: 'els_go',
+      styles: {},
+      replace: true,
+    }).document;
+    expect(buttonHtml(cleared)).not.toContain('style');
+    expect(buttonHtml(cleared)).toContain('<button');
+  });
+
+  it('reports the overrides as facts, so the panel knows what is deliberate', () => {
+    const styled = apply(withButton(), {
+      op: 'set_style',
+      screen: 'Login',
+      element: 'els_go',
+      styles: { 'background-color': '#ff0000', 'border-radius': 'var(--radius-md)' },
+    }).document;
+
+    const button = findHtml(parseHtml(buttonHtml(styled)), 'els_go')!;
+    const facts = factsOf(button);
+    expect(facts.style['background-color']).toBe('#ff0000');
+    expect(facts.style['border-radius']).toBe('var(--radius-md)');
+  });
+
+  it('says what was styled in the outline, so an implementer sees the exception', () => {
+    const styled = apply(withButton(), {
+      op: 'set_style',
+      screen: 'Login',
+      element: 'els_go',
+      styles: { 'font-size': '20px' },
+    }).document;
+
+    expect(renderElementOutline(buttonHtml(styled))).toContain('styled: font-size: 20px');
+    expect(renderElementOutline(buttonHtml(styled), { showStyle: false })).not.toContain('styled:');
+  });
+
+  it('refuses a declaration that would do something rather than show something', () => {
+    const written = apply(withButton(), {
+      op: 'set_style',
+      screen: 'Login',
+      element: 'els_go',
+      styles: {
+        width: 'expression(alert(1))',
+        'background-image': 'url(https://example.com/tracker.png)',
+        color: '#123456',
+      },
+    }).document;
+
+    const html = buttonHtml(written);
+    expect(html).not.toContain('expression');
+    expect(html).not.toContain('example.com');
+    expect(html).toContain('color: #123456');
+  });
+
+  it('cleans a style attribute written by hand on the way into the document', () => {
+    const { html, removed } = normalizeHtml(
+      '<p style="color: red; background: url(https://tracker.example/x.png)">Hi</p>',
+    );
+    expect(html).toContain('color: red');
+    expect(html).not.toContain('tracker.example');
+    expect(removed.join(' ')).toContain('style background');
+  });
+
+  it('keeps a semicolon that belongs to a value rather than cutting the value in half', () => {
+    const declarations = parseInlineStyle(
+      'background: url("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="); color: red',
+    );
+    expect(declarations['background']).toContain('base64,PHN2Zz48L3N2Zz4=');
+    expect(declarations['color']).toBe('red');
+    expect(formatInlineStyle(declarations)).toContain('color: red');
+  });
+
+  it('reads a bare number as pixels, and leaves anything that is already CSS alone', () => {
+    expect(cssLength('width', '240')).toBe('240px');
+    expect(cssLength('width', '50%')).toBe('50%');
+    expect(cssLength('width', 'calc(100% - 2rem)')).toBe('calc(100% - 2rem)');
+    // Not everything that looks like a number is a length.
+    expect(cssLength('opacity', '0.5')).toBe('0.5');
+    expect(cssLength('font-weight', '600')).toBe('600');
+    expect(lengthNumber('16px')).toBe(16);
+    expect(lengthNumber('auto')).toBeNull();
+  });
+
+  it('says which element it could not find, rather than styling the wrong one', () => {
+    const result = apply(withButton(), {
+      op: 'set_style',
+      screen: 'Login',
+      element: 'els_nothing',
+      styles: { color: 'red' },
+    });
+    expect(result.applied).toBe(0);
+    expect(result.errors[0]?.message).toContain('els_nothing');
   });
 });

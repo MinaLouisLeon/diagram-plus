@@ -321,11 +321,19 @@ Takes a list of operations in the same vocabulary the editor uses, applied in or
 
 `add_screen` · `update_screen` · `remove_screen` · `duplicate_screen` ·
 `move_screen` · `reorder_screens` · `set_html` · `set_css` · `insert_html` ·
-`set_attribute` · `set_text` · `move_node` · `remove_node` · `duplicate_node` ·
-`set_system` · `set_notes`
+`set_attribute` · `set_style` · `set_text` · `move_node` · `remove_node` ·
+`duplicate_node` · `set_system` · `set_notes`
 
 Elements are named by their `data-el` id, by the exact words on them, or by tag when
 the screen has only one.
+
+`set_style` restyles one element — `{ "font-size": "20px", "color": "var(--color-accent)" }`
+— by merging declarations into its own `style` attribute; null on a property takes an
+override back off, and `replace` drops the lot. It is the same thing the properties
+panel writes when somebody drags a corner or picks a colour, so a screen nudged by
+hand and one restyled by Claude are the same change. Write the values against the
+tokens, and keep anything true of every button in the stylesheet instead — this is for
+the exceptions.
 
 Operations that fail are reported alongside the ones that worked, so a batch of
 twenty edits is not lost to one bad reference.

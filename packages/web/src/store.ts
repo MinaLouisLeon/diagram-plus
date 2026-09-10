@@ -115,6 +115,18 @@ export interface EditorState {
   selectedElement: string | null;
   /** Which side panel the design tab is showing. */
   designPanel: 'layers' | 'tokens';
+  /** Which half of the properties panel an element is being edited through. */
+  inspectorTab: 'style' | 'spec';
+  /**
+   * What the selected element actually resolves to on the artboard.
+   *
+   * The document says what was overridden; only the browser knows what an
+   * element ends up being, because most of a screen's look comes from the
+   * stylesheet and the tokens. The canvas reads it back out of the iframe so
+   * the properties panel can show a real font size to change rather than an
+   * empty box, and so the selection handles know where to draw.
+   */
+  measured: ElementMeasure | null;
   /** True while the client view is filling the window for a review. */
   presenting: boolean;
   /** True while a save is in flight. */
@@ -138,6 +150,16 @@ export interface EditorState {
   notice: string | null;
 }
 
+/** One element as the browser has it: where it sits, and what it looks like. */
+export interface ElementMeasure {
+  screen: string;
+  element: string;
+  /** Its box inside the artboard, in frame pixels — not screen pixels. */
+  box: { x: number; y: number; width: number; height: number };
+  /** Resolved values, whether they came from a token, a rule or the element. */
+  computed: Record<string, string>;
+}
+
 const HISTORY_LIMIT = 60;
 
 /** Everything design-related, cleared. Used whenever the open diagram changes. */
@@ -150,6 +172,7 @@ const BLANK_DESIGN = {
   designLoading: false,
   selectedScreen: null,
   selectedElement: null,
+  measured: null,
 } satisfies Partial<EditorState>;
 
 class EditorStore {
@@ -177,6 +200,8 @@ class EditorStore {
     selectedScreen: null,
     selectedElement: null,
     designPanel: 'layers',
+    inspectorTab: 'style',
+    measured: null,
     presenting: false,
     saving: false,
     dirty: false,
@@ -260,6 +285,15 @@ class EditorStore {
       designProgress: design && current ? computeDesignProgress(current, design) : null,
       selectedScreen,
       selectedElement,
+      // A measurement belongs to one element. It survives an edit to the same
+      // one — the canvas re-measures as soon as the artboard has reloaded, and
+      // dropping it in between would make the handles flicker off and back on
+      // every keystroke — but a measurement of something no longer selected is
+      // simply the wrong element's size, so it goes.
+      measured:
+        this.state.measured && this.state.measured.element === selectedElement
+          ? this.state.measured
+          : null,
       ...this.historyFlags(),
       ...patch,
     });
@@ -1039,18 +1073,37 @@ class EditorStore {
 
   /** Which artboard is being worked on, and which element within it. */
   selectScreen(id: string | null): void {
-    this.set({ selectedScreen: id, selectedElement: null });
+    this.set({ selectedScreen: id, selectedElement: null, measured: null });
   }
 
   selectElement(id: string | null, screen?: string): void {
     this.set({
       selectedElement: id,
+      measured: null,
       ...(screen ? { selectedScreen: screen } : {}),
     });
   }
 
+  /**
+   * What the canvas found when it looked at the selected element.
+   *
+   * Called on every render of an artboard, so it has to be cheap when nothing
+   * has moved: an equal measurement is dropped rather than set, or measuring
+   * would re-render the canvas, which would measure again.
+   */
+  measureElement(measure: ElementMeasure | null): void {
+    const current = this.state.measured;
+    if (current === measure) return;
+    if (current && measure && sameMeasure(current, measure)) return;
+    this.set({ measured: measure });
+  }
+
   setDesignPanel(panel: 'layers' | 'tokens'): void {
     this.set({ designPanel: panel });
+  }
+
+  setInspectorTab(tab: 'style' | 'spec'): void {
+    this.set({ inspectorTab: tab });
   }
 
   /** The artboard currently being worked on. */
@@ -1168,6 +1221,22 @@ class EditorStore {
 
 function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** Two measurements of the same element that would render identically. */
+function sameMeasure(a: ElementMeasure, b: ElementMeasure): boolean {
+  if (a.element !== b.element || a.screen !== b.screen) return false;
+  if (
+    Math.round(a.box.x) !== Math.round(b.box.x) ||
+    Math.round(a.box.y) !== Math.round(b.box.y) ||
+    Math.round(a.box.width) !== Math.round(b.box.width) ||
+    Math.round(a.box.height) !== Math.round(b.box.height)
+  ) {
+    return false;
+  }
+  const names = Object.keys(a.computed);
+  if (names.length !== Object.keys(b.computed).length) return false;
+  return names.every((name) => a.computed[name] === b.computed[name]);
 }
 
 /** Folder name of a project root, for naming an exported bundle. */

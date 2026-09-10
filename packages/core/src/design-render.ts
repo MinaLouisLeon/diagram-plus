@@ -63,9 +63,10 @@ function headline(element: HtmlElement): string {
  * somebody can build. Every one of these reads an attribute the format
  * promises will be there.
  */
-function meaning(element: HtmlElement): string[] {
+function meaning(element: HtmlElement, showStyle = true): string[] {
   const facts = factsOf(element);
   const out: string[] = [];
+
   if (facts.binding) out.push(`value \u2190 ${facts.binding}`);
   if (facts.action) out.push(`does \u2192 ${facts.action}`);
   if (facts.navigatesTo) out.push(`goes \u2192 ${facts.navigatesTo}`);
@@ -96,6 +97,16 @@ function meaning(element: HtmlElement): string[] {
   if (src) out.push(`shows: ${src}`);
   const note = getAttr(element, 'data-note');
   if (note) out.push(`note: ${note}`);
+
+  // Last, and only if it is there: what this element was styled to on its own,
+  // apart from the stylesheet. An implementer has to be told, because it is
+  // precisely where the screen departs from what every other button does — but
+  // it goes under the contract rather than over it, since what a thing is
+  // bound to is read before what colour it was made.
+  const overrides = Object.entries(facts.style);
+  if (showStyle && overrides.length) {
+    out.push(`styled: ${overrides.map(([name, value]) => `${name}: ${value}`).join('; ')}`);
+  }
   return out;
 }
 
@@ -132,7 +143,7 @@ export function renderElementOutline(html: string, options: OutlineOptions = {})
       let line = `${pad}- ${headline(element)}`;
       if (!showStyle) line = line.replace(/^(\s*- [a-z0-9[\]]+)\.[^ "]*/i, '$1');
       lines.push(line);
-      for (const note of meaning(element)) lines.push(`${pad}${INDENT}${note}`);
+      for (const note of meaning(element, showStyle)) lines.push(`${pad}${INDENT}${note}`);
       // Whatever is inside these has already been said, once, above.
       if (SUMMARISED.has(element.tagName.toLowerCase())) continue;
       visit(element, depth + 1);
