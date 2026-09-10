@@ -47,9 +47,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # npm/cli#4828 can leave the platform binary out of the tree. Defensive
+      # only: a real problem surfaces in the build with a clearer message.
       - name: Repair rollup native binary
-        # npm/cli#4828 can leave the platform binary out of the tree.
-        run: npm ls @rollup/rollup-linux-x64-gnu >/dev/null 2>&1 || npm install --no-save --no-package-lock @rollup/rollup-linux-x64-gnu
+        run: |
+          npm ls @rollup/rollup-linux-x64-gnu >/dev/null 2>&1 && exit 0
+          npm install --no-save --no-package-lock @rollup/rollup-linux-x64-gnu ||
+            echo "Could not add the rollup binary; continuing."
 
       - name: Build libraries
         run: npm run build:libs
@@ -71,22 +75,23 @@ jobs:
             target: x86_64-pc-windows-msvc
             name: windows-x64
             bundles: nsis,msi
-            rollup: '@rollup/rollup-win32-x64-msvc'
+            host-rollup: '@rollup/rollup-win32-x64-msvc'
           - platform: macos-latest
             target: aarch64-apple-darwin
             name: macos-arm64
             bundles: dmg
-            rollup: '@rollup/rollup-darwin-arm64'
+            host-rollup: '@rollup/rollup-darwin-arm64'
           - platform: macos-latest
             target: x86_64-apple-darwin
             name: macos-x64
             bundles: dmg
-            rollup: '@rollup/rollup-darwin-x64'
+            # macos-latest runners are arm64; only Rust cross-compiles to x64.
+            host-rollup: '@rollup/rollup-darwin-arm64'
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             name: linux-x64-deb
             bundles: deb
-            rollup: '@rollup/rollup-linux-x64-gnu'
+            host-rollup: '@rollup/rollup-linux-x64-gnu'
 
     runs-on: ${{ matrix.platform }}
 
@@ -126,9 +131,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Defensive only, for npm/cli#4828. If it cannot be fixed here the vite
+      # build fails later with a clearer message, so this never stops the run.
       - name: Repair rollup native binary
         shell: bash
-        run: npm ls ${{ matrix.rollup }} >/dev/null 2>&1 || npm install --no-save --no-package-lock ${{ matrix.rollup }}
+        env:
+          PKG: ${{ matrix.host-rollup }}
+        run: |
+          npm ls "$PKG" >/dev/null 2>&1 && exit 0
+          npm install --no-save --no-package-lock "$PKG" ||
+            echo "Could not add $PKG; continuing."
 
       # The version lives in the tag, not in a commit — see release.yml. Each
       # runner stamps it in just before building, and never commits the change.

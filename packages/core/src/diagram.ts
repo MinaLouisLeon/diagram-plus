@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { BlockSchema } from './blocks.js';
 import { EdgeSchema } from './edges.js';
 import { PositionSchema, SizeSchema } from './common.js';
+import { ClientViewSchema } from './client-view.js';
 
 /** Bumped whenever the on-disk shape changes; `migrate()` handles older files. */
 export const FORMAT_VERSION = 1;
@@ -67,6 +68,12 @@ export const DiagramSchema = z.object({
   updatedAt: z.string().default(''),
   /** Free-form notes the user or Claude wants to keep with the design. */
   notes: z.string().default(''),
+  /**
+   * The plain-language view the client is shown and edits. Null until someone
+   * asks for one; see `client-view.ts` for why it is stored rather than
+   * derived on the fly.
+   */
+  clientView: ClientViewSchema.nullable().default(null),
 });
 
 export type Diagram = z.infer<typeof DiagramSchema>;

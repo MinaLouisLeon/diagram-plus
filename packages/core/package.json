@@ -22,6 +22,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "parse5": "^8.0.1",
     "zod": "^3.25.76"
   }
 }

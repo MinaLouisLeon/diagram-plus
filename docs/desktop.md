@@ -45,9 +45,11 @@ Windows 10 already have it; the installer fetches it if not.
 ## Using it
 
 **Open a project.** The welcome screen asks for a folder. Diagrams live in
-`.diagrams/` inside it, alongside the code they describe. The folder is
-remembered, and the last one reopens on the next launch — the toolbar's project
-button switches to another, and lists the recent ones.
+`.diagrams/` inside it, alongside the code they describe. The app never opens a
+folder by itself — every launch starts on that screen, so a fresh install has no
+project and no diagrams until you choose one. Folders you have opened are listed
+under **Recent** for one click next time, and the toolbar's project button
+switches between them or picks a new one.
 
 **Design, review, edit.** Everything the browser editor does: drag blocks in
 from the palette, connect them, fill in the inspector, check the spec, mark it
@@ -56,6 +58,18 @@ ready.
 **Changes from Claude appear live.** Rust watches `.diagrams/`, so a diagram the
 MCP server edits updates on the canvas within a second — no refresh, same as the
 browser.
+
+**Work on a diagram from a project you do not have.** This is the app's own
+use case as much as the repository's: someone sends you a `.diagram.json`, you
+open any folder as a project, and the toolbar's **⇅** button imports the file.
+Edit it, export it back, send it on. Both directions use native Save and Open
+dialogs, and they are the only part of the app that reaches outside `.diagrams/`
+— the path always comes from a dialog the user just clicked through, never from
+the webview.
+
+Importing over a diagram you already have shows you both sides first and asks
+which to keep. See [the README](../README.md#send-a-diagram-to-someone-who-does-not-have-the-repository)
+for the whole round trip.
 
 **Connect your AI tools.** The gear in the toolbar opens the MCP settings, which
 does what `npm run install-mcp` does in a terminal: finds Claude Code, Claude
@@ -122,6 +136,7 @@ packages/desktop/
     src/lib.rs          wires the plugins, state and commands together
     src/project.rs      the open project, recent list, folder picker
     src/diagrams.rs     read, write, list and delete diagram files
+    src/transfer.rs     the import/export dialogs, the one path outside .diagrams/
     src/watcher.rs      notify → debounce → "diagram-changed"
     src/mcp.rs          detecting AI tools and writing their config
 ```

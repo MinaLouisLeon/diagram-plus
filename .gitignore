@@ -9,6 +9,11 @@ packages/server/public/
 .env
 .scratch/
 
+# This repository's own working diagrams. diagram-plus diagrams are normally
+# committed alongside the code they describe, but these are scratch: they are
+# what the editor and the MCP server are pointed at while developing it.
+.diagrams/
+
 # Playwright MCP scratch output
 .playwright-mcp/
 

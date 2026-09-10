@@ -539,3 +539,651 @@ pre.spec {
 .report li.added strong, .report li.updated strong { color: var(--success); }
 .report li.failed strong { color: var(--danger); }
 .report li.skipped strong { color: var(--text-dim); }
+
+/* ---------- context menu ---------- */
+
+/*
+ * The backdrop is what makes the menu modal: it swallows the click that
+ * dismisses it, so a right-click never leaves the canvas panning or a button
+ * pressed on the way out.
+ */
+.context-menu-backdrop { position: fixed; inset: 0; z-index: 60; }
+
+.context-menu {
+  position: fixed;
+  min-width: 184px;
+  max-width: 320px;
+  padding: 5px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  outline: none;
+}
+
+.context-menu-rule { height: 1px; background: var(--border); margin: 5px 6px; }
+
+.context-menu-heading {
+  padding: 5px 9px 4px;
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.context-menu-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 6px 9px;
+  background: none; border: none; border-radius: 4px;
+  text-align: left; cursor: pointer; color: var(--text);
+}
+.context-menu-item.active { background: var(--accent-strong); color: #fff; }
+.context-menu-item.danger { color: var(--danger); }
+.context-menu-item.active.danger { background: var(--danger); color: #fff; }
+.context-menu-item:disabled { color: var(--text-dim); cursor: default; }
+
+.context-menu-item .tick {
+  width: 14px; flex: none; text-align: center; font-size: 12px;
+}
+.context-menu-item .label {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.context-menu-item .hint,
+.context-menu-item .arrow { flex: none; font-size: 11.5px; color: var(--text-dim); }
+.context-menu-item .arrow { font-size: 14px; }
+.context-menu-item.active .hint,
+.context-menu-item.active .arrow { color: color-mix(in srgb, #fff 75%, transparent); }
+
+/* The empty space under the diagram list answers a right-click too. */
+.diagram-list { min-height: 100%; }
+
+/* ---------- import / export ---------- */
+
+.diagram-list-actions { display: flex; gap: 6px; }
+.diagram-list-actions .btn { flex: 1; justify-content: center; }
+
+.import-summary { margin-right: auto; text-align: left; }
+
+.import-warning {
+  margin: 0 0 12px; padding: 9px 11px; border-radius: var(--radius);
+  border: 1px solid var(--warning); color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  font-size: 12.5px; line-height: 1.5;
+}
+
+.import-list { display: flex; flex-direction: column; gap: 12px; }
+
+.import-row {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px; background: var(--bg-panel);
+}
+.import-row.skipped { opacity: 0.55; }
+
+.import-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.import-head strong { font-size: 13.5px; }
+.import-head .hint { margin-left: auto; }
+
+.import-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.import-side {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 8px 10px; background: var(--bg-input);
+}
+.import-side p { margin: 2px 0 0; font-size: 12.5px; }
+.import-side .section-label { margin: 0; }
+
+.import-match { margin: 8px 0 0; }
+
+.import-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+
+.import-choice {
+  display: flex; align-items: flex-start; gap: 7px; flex: 1; min-width: 170px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 7px 9px; cursor: pointer; background: var(--bg-input);
+}
+.import-choice:hover { border-color: var(--border-strong); }
+.import-choice.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.import-choice input { margin: 2px 0 0; accent-color: var(--accent); }
+.import-choice span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.import-choice strong { font-size: 12.5px; }
+.import-choice em {
+  font-style: normal; font-size: 11.5px; color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .import-sides { grid-template-columns: 1fr; }
+}
+
+/* ---------- client view ---------- */
+
+/*
+ * The tree stands in for the canvas when the diagram has to be explained
+ * rather than edited, so it is typographic rather than graphical: indentation
+ * carries the structure and colour is reserved for the few kinds of row whose
+ * difference actually matters to a reader.
+ */
+
+.panel-header.wrap { flex-wrap: wrap; row-gap: 6px; }
+
+.seg { display: flex; }
+.seg .btn { border-radius: 0; }
+.seg .btn:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.seg .btn:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; margin-left: -1px; }
+
+.check {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--text-muted); white-space: nowrap;
+}
+.check input[type='checkbox'] { width: 14px; height: 14px; accent-color: var(--accent-strong); }
+
+.panel-header input,
+.panel-header select,
+.present header input,
+.present header select {
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 3px 7px; font-size: 12px; font-family: inherit;
+}
+.panel-header input:focus,
+.panel-header select:focus,
+.present header input:focus,
+.present header select:focus { outline: none; border-color: var(--accent); }
+
+.tree { font-size: 13px; }
+
+.tree-row {
+  display: flex; align-items: baseline; gap: 7px;
+  padding: 3px 8px 3px 0; border-radius: var(--radius-sm); cursor: pointer;
+}
+.tree-row:hover { background: var(--bg-input); }
+
+.tree-twist { flex: none; width: 12px; color: var(--text-dim); font-size: 10px; }
+.tree-twist.leaf { opacity: 0.4; }
+
+.tree-text { min-width: 0; }
+.tree-label { overflow-wrap: anywhere; }
+.tree-text em {
+  font-style: normal; color: var(--text-dim); font-size: 11.5px;
+  display: block; overflow-wrap: anywhere;
+}
+
+.tree-kind {
+  margin-left: auto; flex: none; font-size: 10px; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--text-dim); opacity: 0;
+}
+.tree-row:hover .tree-kind { opacity: 1; }
+
+/* The rows a reader needs to tell apart at a glance, and no others. */
+.tree-row.screen .tree-label { font-weight: 600; }
+.tree-row.section .tree-label { font-weight: 650; color: var(--accent); }
+.tree-row.question .tree-label { color: var(--warning); }
+.tree-row.branch .tree-label,
+.tree-row.integration .tree-label { color: var(--text-muted); }
+.tree-row.repeat .tree-label { color: var(--text-dim); font-style: italic; }
+
+.tree-footnote { margin: 14px 0 0; font-size: 11.5px; color: var(--text-dim); }
+
+/* ---------- presentation mode ---------- */
+
+.present {
+  position: fixed; inset: 0; z-index: 45; background: var(--bg);
+  display: flex; flex-direction: column;
+}
+.present header {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 6px;
+  padding: 16px 26px; border-bottom: 1px solid var(--border);
+}
+.present header h1 { margin: 0; font-size: 20px; }
+.present header p { margin: 3px 0 0; color: var(--text-muted); font-size: 13px; max-width: 62ch; }
+
+.present-body { overflow: auto; padding: 26px 30px 60px; }
+.present-body .tree { max-width: 1100px; }
+
+.tree.large { font-size: 16px; line-height: 1.45; }
+.tree.large .tree-row { padding: 6px 10px 6px 0; }
+.tree.large .tree-text em { font-size: 13.5px; }
+.tree.large .tree-twist { width: 16px; font-size: 12px; }
+
+/* ---------- the client view ---------- */
+
+.client-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+.client-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 6px;
+  padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg-panel);
+}
+.client-bar input,
+.client-bar select {
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 3px 7px; font-size: 12px; font-family: inherit;
+}
+.client-bar input:focus, .client-bar select:focus { outline: none; border-color: var(--accent); }
+
+.client-body { flex: 1; min-height: 0; display: flex; }
+.client-canvas { flex: 1; min-width: 0; }
+
+.client-list { flex: 1; min-width: 0; overflow: auto; padding: 18px 24px 40px; }
+.client-list-actions { display: flex; gap: 8px; margin-bottom: 14px; }
+
+/* ---------- a box ---------- */
+
+.client-node {
+  --tint: var(--accent);
+  width: 260px; min-height: 96px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--tint);
+  border-radius: var(--radius);
+  padding: 10px 13px 11px;
+  display: flex; flex-direction: column; gap: 5px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.22);
+  cursor: grab;
+}
+.client-node.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+/* Added in the review and not yet in the technical diagram. */
+.client-node.fresh { border-style: dashed; border-top-style: solid; }
+.client-node.orphaned { opacity: 0.62; }
+
+.client-node-head { display: flex; align-items: baseline; gap: 8px; }
+.client-node-name { font-weight: 600; font-size: 15px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.client-node-kind {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--tint); flex: none;
+}
+.client-node-input {
+  flex: 1; min-width: 0; font: inherit; font-weight: 600; font-size: 15px;
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 1px 5px;
+}
+.client-node-asks { font-size: 13px; color: var(--warning); }
+.client-node-line { font-size: 12.5px; color: var(--text-muted); line-height: 1.4; }
+
+.client-node-branches { display: flex; flex-wrap: wrap; gap: 4px; margin-top: auto; }
+.client-branch {
+  font-size: 10.5px; padding: 1px 7px; border-radius: 999px;
+  background: var(--bg-input); border: 1px solid var(--border); color: var(--text-muted);
+}
+
+.client-node-marks { display: flex; flex-wrap: wrap; gap: 4px; }
+.client-mark {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 1px 6px; border-radius: 4px; border: 1px solid transparent;
+}
+.client-mark.new { color: var(--success); border-color: color-mix(in srgb, var(--success) 45%, transparent); }
+.client-mark.reworded,
+.client-mark.order { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+.client-mark.gone { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+
+.client-edge .react-flow__edge-path { stroke: var(--border-strong); stroke-width: 1.6px; }
+.client-edge .react-flow__edge-text { font-size: 11px; fill: var(--text-muted); }
+
+/* ---------- the box being edited ---------- */
+
+.client-inspector {
+  flex: none; width: 320px; overflow: auto;
+  border-left: 1px solid var(--border); background: var(--bg-panel);
+  padding: 14px 16px 26px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.client-inspector-head { display: flex; align-items: baseline; gap: 8px; }
+.client-inspector-head strong { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+
+.client-inspector label,
+.client-branches .label,
+.client-inspector-order .label {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim);
+}
+.client-inspector input,
+.client-inspector select,
+.client-inspector textarea {
+  font: inherit; font-size: 13px; text-transform: none; letter-spacing: normal;
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 8px;
+}
+.client-inspector input:focus,
+.client-inspector select:focus,
+.client-inspector textarea:focus { outline: none; border-color: var(--accent); }
+.client-inspector textarea { resize: vertical; }
+
+.client-branches { display: flex; flex-direction: column; gap: 6px; }
+.client-branch-row { display: flex; gap: 5px; align-items: center; }
+.client-branch-row input:first-child { flex: 0 0 88px; min-width: 0; }
+.client-branch-row input:nth-child(2) { flex: 1; min-width: 0; }
+
+.client-inspector-order { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.client-inspector-order .label { flex: 1; }
+.client-inspector-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ---------- what is out of step ---------- */
+
+.client-strip {
+  flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 14px; border-top: 1px solid var(--border);
+  background: var(--bg-panel); font-size: 12.5px;
+}
+.client-strip.quiet { color: var(--text-dim); }
+.client-strip-list {
+  flex-basis: 100%; margin: 6px 0 2px; padding: 0 0 0 4px; list-style: none;
+  display: flex; flex-direction: column; gap: 4px; color: var(--text-muted);
+  max-height: 168px; overflow: auto;
+}
+.client-strip-list li { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.client-strip .link {
+  background: none; border: none; padding: 0; font: inherit;
+  color: var(--accent); cursor: pointer; text-decoration: underline;
+}
+
+/* Presenting: the canvas fills the window and stops being editable. */
+.present-body.canvas { padding: 0; display: flex; flex: 1; min-height: 0; }
+
+/* ================================================================== *
+ * The design tab
+ * ================================================================== *
+ *
+ * Three panes: layers and the palette, the artboards, the properties.
+ *
+ * The one rule worth stating is that everything inside `.design-artboard-body`
+ * belongs to the *design*, not to the editor. The app's own colours, fonts and
+ * borders stop at that boundary — what is inside comes from the design system
+ * tokens, so a screen looks the same here as it will when it is built, and the
+ * editor's dark theme does not quietly become part of somebody's product.
+ */
+
+.design-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+.design-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 6px;
+  padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg-panel);
+}
+.design-count { font-size: 11.5px; color: var(--text-dim); }
+
+.design-body { flex: 1; min-height: 0; display: flex; }
+
+/* ---------- the left pane ---------- */
+
+.design-side {
+  flex: none; width: 260px; min-width: 0; overflow: auto;
+  border-right: 1px solid var(--border); background: var(--bg-panel);
+  display: flex; flex-direction: column;
+}
+
+.design-panel-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--bg-panel); z-index: 2;
+}
+.design-panel-head .label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim);
+}
+.design-panel-head .hint { margin: 0; font-size: 11px; color: var(--text-dim); }
+
+.design-palette { border-bottom: 1px solid var(--border); }
+.design-palette-group { padding: 8px 10px 4px; }
+.design-palette-label {
+  display: block; margin-bottom: 5px;
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim);
+}
+.design-palette-items { display: flex; flex-wrap: wrap; gap: 4px; }
+.design-palette-item {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 7px; font: inherit; font-size: 11.5px;
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  cursor: grab; user-select: none;
+}
+.design-palette-item:hover:not(:disabled) { border-color: var(--accent); }
+.design-palette-item:disabled { opacity: 0.4; cursor: default; }
+.design-palette-item:active { cursor: grabbing; }
+
+/* ---------- the layers tree ---------- */
+
+.design-layers { display: flex; flex-direction: column; min-height: 0; }
+.design-layers-tree { padding-bottom: 20px; }
+.design-layers-tree .hint { margin: 10px; font-size: 12px; color: var(--text-dim); }
+
+.design-layer {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 8px 3px 0; font-size: 12px; cursor: default;
+  border: 1px solid transparent;
+}
+.design-layer:hover { background: var(--bg-raised); }
+.design-layer.selected {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: var(--accent);
+}
+.design-layer-twist {
+  flex: none; width: 14px; padding: 0; font: inherit; font-size: 9px;
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+}
+.design-layer-icon { flex: none; width: 14px; text-align: center; color: var(--text-muted); }
+.design-layer-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.design-layer-tag {
+  flex: none; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-dim); border: 1px solid var(--border); border-radius: 3px; padding: 0 3px;
+}
+.design-layer-tag.act { color: var(--accent); border-color: var(--accent); }
+
+/* ---------- the canvas ---------- */
+
+.design-canvas {
+  flex: 1; min-width: 0; position: relative; overflow: hidden;
+  background:
+    radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0) 0 0 / 24px 24px,
+    var(--bg);
+  cursor: grab;
+}
+.design-canvas:active { cursor: grabbing; }
+
+.design-surface { position: absolute; inset: 0; transform-origin: 0 0; }
+
+.design-artboard { position: absolute; }
+.design-artboard-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 2px; font-size: 12px; color: var(--text-muted);
+  cursor: move; user-select: none;
+}
+.design-artboard-name { font-weight: 600; color: var(--text); }
+.design-artboard-bar code { font-size: 11px; color: var(--text-dim); }
+.design-artboard-size { font-size: 11px; color: var(--text-dim); }
+.design-artboard.selected .design-artboard-name { color: var(--accent); }
+.design-artboard.orphaned .design-artboard-name { color: var(--warning); }
+
+.design-status {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em;
+  border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; color: var(--text-dim);
+}
+.design-status.drafted { color: var(--accent); border-color: var(--accent); }
+.design-status.approved { color: var(--success, #16a34a); border-color: currentColor; }
+
+.design-artboard-body {
+  position: relative; overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 30px rgb(0 0 0 / 0.18);
+  background: #fff;
+}
+/* The screen renders in its own document, so none of the editor's styling can
+   reach it and none of its styling can reach the editor. That isolation is the
+   whole reason a design looks here exactly as it will when it is built. */
+.design-artboard-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; }
+.design-artboard.selected .design-artboard-body { border-color: var(--accent); }
+.design-artboard.orphaned .design-artboard-body { opacity: 0.6; }
+
+.design-artboard-resize {
+  position: absolute; right: -5px; bottom: -5px; width: 14px; height: 14px;
+  border: 1px solid var(--accent); background: var(--bg-panel);
+  border-radius: 3px; cursor: nwse-resize; opacity: 0;
+}
+.design-artboard:hover .design-artboard-resize,
+.design-artboard.selected .design-artboard-resize { opacity: 1; }
+
+.design-zoom {
+  position: absolute; right: 12px; bottom: 12px; display: flex; gap: 4px;
+  padding: 4px; border-radius: var(--radius-sm);
+  background: var(--bg-panel); border: 1px solid var(--border);
+}
+
+/* ---------- an element on an artboard ---------- */
+
+.dz-el { position: relative; outline: 1px solid transparent; outline-offset: -1px; }
+.dz-el:hover { outline-color: color-mix(in srgb, #2563eb 45%, transparent); }
+.dz-el.selected { outline: 2px solid #2563eb; outline-offset: -1px; }
+.dz-el.locked { cursor: default; }
+
+.dz-el-badge {
+  position: absolute; top: -17px; left: -1px; z-index: 3;
+  padding: 1px 5px; border-radius: 3px 3px 0 0;
+  background: #2563eb; color: #fff;
+  font-size: 10px; line-height: 1.4; letter-spacing: 0.02em; white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ---------- the properties pane ---------- */
+
+.design-inspector {
+  flex: none; width: 300px; overflow: auto;
+  border-left: 1px solid var(--border); background: var(--bg-panel);
+  padding: 14px 16px 26px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.design-inspector-head { display: flex; align-items: baseline; gap: 8px; }
+.design-inspector-head strong { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+.design-node-kind {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim);
+}
+
+.design-inspector label,
+.design-inspector .label {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim);
+}
+.design-inspector label.check {
+  flex-direction: row; align-items: center; gap: 5px; text-transform: none; letter-spacing: normal;
+  font-size: 12px; color: var(--text-muted);
+}
+.design-inspector input,
+.design-inspector select,
+.design-inspector textarea {
+  font: inherit; font-size: 13px; text-transform: none; letter-spacing: normal;
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 8px;
+  min-width: 0;
+}
+.design-inspector input:focus,
+.design-inspector select:focus,
+.design-inspector textarea:focus { outline: none; border-color: var(--accent); }
+.design-inspector textarea { resize: vertical; }
+.design-inspector .hint { margin: 0; font-size: 11.5px; color: var(--text-dim); line-height: 1.5; }
+.design-inspector .hint.warn { color: var(--warning); }
+
+.design-row { display: flex; gap: 6px; align-items: flex-end; }
+.design-row > label { flex: 1; min-width: 0; }
+.design-size { display: flex; gap: 4px; }
+.design-size select { flex: 1; min-width: 0; }
+.design-size input { flex: 0 0 58px; }
+
+.design-section {
+  display: flex; flex-direction: column; gap: 8px;
+  padding-top: 10px; border-top: 1px solid var(--border);
+}
+.design-checks { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.design-options, .design-states { display: flex; flex-direction: column; gap: 6px; }
+.design-option-row, .design-state-row { display: flex; gap: 5px; align-items: center; }
+.design-option-row input, .design-state-row input { flex: 1; min-width: 0; }
+.design-inspector-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ---------- the tokens panel ---------- */
+
+.design-tokens {
+  display: flex; flex-direction: column; gap: 12px; padding: 0 10px 24px;
+}
+.design-tokens label,
+.design-tokens .label {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim);
+}
+.design-tokens input,
+.design-tokens textarea {
+  font: inherit; font-size: 12.5px; text-transform: none; letter-spacing: normal;
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px 7px;
+  min-width: 0;
+}
+.design-tokens textarea { resize: vertical; }
+.design-tokens input:focus, .design-tokens textarea:focus { outline: none; border-color: var(--accent); }
+.design-tokens .hint { margin: 0; font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+
+.design-token-row { display: flex; gap: 4px; align-items: center; }
+.design-token-name { flex: 0 0 88px; }
+.design-token-value { flex: 1; min-width: 0; font-family: var(--mono, ui-monospace, monospace); }
+.design-token-row input[type='color'] {
+  flex: 0 0 28px; height: 24px; padding: 1px; cursor: pointer;
+}
+.design-token-row.type input[type='number'] { flex: 0 0 52px; }
+.design-token-sample { flex: 0 0 30px; text-align: center; color: var(--text); }
+
+/* ---------- the strip along the bottom ---------- */
+
+.design-strip {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 7px 12px; border-top: 1px solid var(--border);
+  background: var(--bg-panel); font-size: 12px; color: var(--text-muted);
+}
+.design-strip.quiet { color: var(--text-dim); }
+
+
+/* ---------- the palette, now a shelf of markup snippets ---------- */
+
+.design-palette-group { padding: 4px 8px 8px; }
+.design-palette-label {
+  display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-dim); padding: 6px 2px 4px;
+}
+.design-palette-items { display: flex; flex-wrap: wrap; gap: 4px; }
+.design-palette-item {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 8px; font-size: 11.5px; cursor: grab;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-panel); color: var(--text);
+}
+.design-palette-item:hover { border-color: var(--accent); color: var(--accent); }
+.design-palette-icon { opacity: 0.7; }
+
+/* ---------- a layer row ---------- */
+
+.design-layer {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 8px; font-size: 12px; cursor: default; user-select: none;
+}
+.design-layer:hover { background: var(--bg-hover, rgb(127 127 127 / 0.08)); }
+.design-layer.selected { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.design-layer-tag { font-size: 10.5px; color: var(--text-dim); flex: none; }
+.design-layer-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0;
+}
+.design-layer-flag {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-dim); border: 1px solid var(--border); border-radius: 3px; padding: 0 3px;
+}
+.twisty { width: 10px; flex: none; font-size: 9px; color: var(--text-dim); transition: transform 100ms; }
+.twisty.open { transform: rotate(0deg); }
+.twisty:not(.open):not(.spacer) { transform: rotate(-90deg); }
+.twisty.spacer { visibility: hidden; }
+
+/* ---------- the inspector, for an element ---------- */
+
+.inspector-head { display: flex; align-items: baseline; gap: 8px; padding: 12px 12px 4px; }
+.inspector-title { font-weight: 600; font-size: 13px; }
+.inspector-tag { font-size: 11px; color: var(--text-dim); }
+.inspector-section { padding: 8px 12px 12px; border-bottom: 1px solid var(--border); }
+.inspector-section h4 {
+  margin: 4px 0 8px; font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-dim); font-weight: 600;
+}
+.inspector-checks { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; margin-top: 8px; }
+.inspector-actions { display: flex; gap: 6px; padding: 12px; }
+.inspector-hint { padding: 0 12px 12px; font-size: 11.5px; color: var(--text-dim); }

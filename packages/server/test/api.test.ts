@@ -129,6 +129,43 @@ describe('the REST API', () => {
     expect(status).toBe(400);
   });
 
+  it('exports the client view, with the plumbing folded away', async () => {
+    const { body } = await call<{ content: string }>(
+      'GET',
+      '/api/diagrams/api-test/export?format=tree',
+    );
+    expect(body.content).toContain('Things');
+    // The data model is behind a `reads`, which a client does not need to see.
+    expect(body.content).not.toContain('pieces of information');
+
+    const withData = await call<{ content: string }>(
+      'GET',
+      '/api/diagrams/api-test/export?format=tree&data=true',
+    );
+    expect(withData.body.content).toContain('Thing');
+  });
+
+  it('serves the client view as data, shaped by query parameters', async () => {
+    const plain = await call<{ tree: { roots: unknown[]; audience: string; omitted: unknown[] } }>(
+      'GET',
+      '/api/diagrams/api-test/tree',
+    );
+    expect(plain.body.tree.audience).toBe('client');
+    expect(plain.body.tree.roots).toHaveLength(1);
+
+    const technical = await call<{ tree: { audience: string } }>(
+      'GET',
+      '/api/diagrams/api-test/tree?audience=technical',
+    );
+    expect(technical.body.tree.audience).toBe('technical');
+
+    const filtered = await call<{ tree: { omitted: { name: string }[] } }>(
+      'GET',
+      '/api/diagrams/api-test/tree?data=true&types=ui_screen',
+    );
+    expect(filtered.body.tree.omitted.map((o) => o.name)).toContain('Thing');
+  });
+
   it('replaces a whole diagram, which is how undo works', async () => {
     const before = await call<{ diagram: Record<string, unknown> }>('GET', '/api/diagrams/api-test');
     const snapshot = { ...before.body.diagram, blocks: [], edges: [] };
@@ -197,5 +234,170 @@ describe('live updates', () => {
       (m) => m['source'] === 'external' && (m['diagram'] as { description?: string })?.description === 'changed on disk',
     );
     expect(external, 'an external file edit should reach the editor').toBeDefined();
+  });
+});
+
+describe('importing a diagram from elsewhere', () => {
+  interface DiagramBody {
+    diagram: {
+      id: string;
+      slug: string;
+      name: string;
+      revision: number;
+      description: string;
+      blocks: unknown[];
+    };
+  }
+
+  it('replaces the local diagram in place, keeping its identity', async () => {
+    const created = await call<DiagramBody>('POST', '/api/diagrams', { name: 'Handoff' });
+    const mine = created.body.diagram;
+
+    // What comes back from someone who has the app but not this repository.
+    const theirs = { ...mine, name: 'Handoff reviewed', description: 'edited elsewhere', revision: 84 };
+
+    const imported = await call<DiagramBody & { replaced: string | null }>(
+      'POST',
+      '/api/diagrams/import',
+      { diagram: theirs, action: 'replace', target: mine.slug },
+    );
+
+    expect(imported.status).toBe(200);
+    expect(imported.body.replaced).toBe('handoff');
+    expect(imported.body.diagram.id).toBe(mine.id);
+    expect(imported.body.diagram.slug).toBe('handoff');
+    expect(imported.body.diagram.description).toBe('edited elsewhere');
+    // Ours plus one, not theirs.
+    expect(imported.body.diagram.revision).toBe(mine.revision + 1);
+
+    const list = await call<{ diagrams: { slug: string }[] }>('GET', '/api/diagrams');
+    expect(list.body.diagrams.filter((d) => d.slug.startsWith('handoff'))).toHaveLength(1);
+  });
+
+  it('adds a copy alongside instead, when asked', async () => {
+    const created = await call<DiagramBody>('POST', '/api/diagrams', { name: 'Keep Both' });
+    const mine = created.body.diagram;
+
+    const imported = await call<DiagramBody>('POST', '/api/diagrams/import', {
+      diagram: { ...mine, description: 'the other one' },
+      action: 'copy',
+    });
+
+    expect(imported.body.diagram.slug).toBe('keep-both-imported');
+    expect(imported.body.diagram.id).not.toBe(mine.id);
+
+    const original = await call<DiagramBody>('GET', '/api/diagrams/keep-both');
+    expect(original.body.diagram.description).toBe('');
+  });
+
+  it('will not overwrite anything by omission', async () => {
+    const created = await call<DiagramBody>('POST', '/api/diagrams', { name: 'Careful' });
+
+    const noAction = await call<{ error: string }>('POST', '/api/diagrams/import', {
+      diagram: created.body.diagram,
+    });
+    expect(noAction.status).toBe(400);
+
+    const noTarget = await call<{ error: string }>('POST', '/api/diagrams/import', {
+      diagram: created.body.diagram,
+      action: 'replace',
+    });
+    expect(noTarget.status).toBe(400);
+    expect(noTarget.body.error).toMatch(/target/);
+  });
+
+  it('rejects a file that is not a diagram', async () => {
+    const { status, body } = await call<{ error: string }>('POST', '/api/diagrams/import', {
+      diagram: { hello: 'world' },
+      action: 'copy',
+    });
+    expect(status).toBe(400);
+    expect(body.error).toMatch(/not a diagram/);
+  });
+});
+
+describe('the client view over HTTP', () => {
+  interface ViewBody {
+    clientView: {
+      nodes: { id: string; name: string; blockId: string | null }[];
+      edges: unknown[];
+    };
+    changes: { hasChanges: boolean; addedNodes: { name: string }[] };
+  }
+
+  beforeAll(async () => {
+    await call('POST', '/api/diagrams', { name: 'Client Test', projectGoal: 'Review it.' });
+    await call('POST', '/api/diagrams/client-test/batch', {
+      operations: [
+        { op: 'add_block', block: { type: 'ui_screen', name: 'Browse', data: { purpose: 'Look' } } },
+        { op: 'add_block', block: { type: 'ui_screen', name: 'Checkout', data: { purpose: 'Pay' } } },
+        { op: 'add_block', block: { type: 'api_endpoint', name: 'Create order' } },
+        { op: 'add_edge', edge: { source: 'Browse', target: 'Checkout', type: 'navigation' } },
+        { op: 'add_edge', edge: { source: 'Checkout', target: 'Create order', type: 'calls' } },
+      ],
+    });
+  });
+
+  it('derives a view on first ask, without writing one', async () => {
+    const { body } = await call<ViewBody>('GET', '/api/diagrams/client-test/client-view');
+    expect(body.clientView.nodes.map((n) => n.name)).toEqual(['Browse', 'Checkout']);
+    // The endpoint is plumbing, and nothing has been saved yet.
+    expect(body.clientView.nodes.map((n) => n.name)).not.toContain('Create order');
+    expect(body.changes.hasChanges).toBe(false);
+
+    const stored = await call<{ diagram: { clientView: unknown } }>('GET', '/api/diagrams/client-test');
+    expect(stored.body.diagram.clientView).toBeNull();
+  });
+
+  it('saves one when asked to sync, and keeps it up to date after', async () => {
+    const first = await call<{ clientView: { nodes: unknown[] } }>(
+      'POST',
+      '/api/diagrams/client-test/client-view/sync',
+    );
+    expect(first.status).toBe(200);
+    expect(first.body.clientView.nodes).toHaveLength(2);
+
+    await call('POST', '/api/diagrams/client-test/batch', {
+      operations: [{ op: 'add_block', block: { type: 'ui_screen', name: 'Confirmation' } }],
+    });
+
+    const second = await call<{ report: { added: string[] } }>(
+      'POST',
+      '/api/diagrams/client-test/client-view/sync',
+    );
+    expect(second.body.report.added).toContain('Confirmation');
+  });
+
+  it('applies what the client changed, and can be asked to plan it first', async () => {
+    // Stand in for the editor: a box the client added, saved with the diagram.
+    const read = await call<{ diagram: Record<string, unknown> }>('GET', '/api/diagrams/client-test');
+    const diagram = read.body.diagram;
+    const view = diagram['clientView'] as { nodes: Record<string, unknown>[] };
+    view.nodes.push({
+      id: 'cvn_sms',
+      blockId: null,
+      type: 'job',
+      name: 'Text the customer',
+      description: 'Let them know it shipped',
+      order: view.nodes.length,
+      origin: 'client',
+    });
+    await call('PUT', '/api/diagrams/client-test', { diagram });
+
+    const plan = await call<{ operations: { op: string }[]; applied: boolean }>(
+      'POST',
+      '/api/diagrams/client-test/client-view/apply',
+      { dryRun: true },
+    );
+    expect(plan.body.applied).toBe(false);
+    expect(plan.body.operations.map((o) => o.op)).toEqual(['add_block']);
+
+    const done = await call<{ diagram: { blocks: { name: string; tags: string[] }[] } }>(
+      'POST',
+      '/api/diagrams/client-test/client-view/apply',
+      {},
+    );
+    const created = done.body.diagram.blocks.find((b) => b.name === 'Text the customer');
+    expect(created?.tags).toContain('from-client');
   });
 });

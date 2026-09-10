@@ -4,10 +4,15 @@ import { Inspector } from './components/Inspector';
 import { Sidebar } from './components/Sidebar';
 import { Toolbar } from './components/Toolbar';
 import { BottomPanel } from './components/Panels';
+import { ClientPresentation, ClientView } from './components/ClientView';
+import { DesignView } from './components/DesignView';
+import { ImportDialog } from './components/ImportDialog';
 import { NewDiagramDialog } from './components/NewDiagramDialog';
 import { McpSettings } from './components/McpSettings';
+import { UnsavedDialog } from './components/UnsavedDialog';
 import { Welcome } from './components/Welcome';
-import { isDesktop, project, useProject } from './desktop';
+import { showContextMenu } from './context-menu';
+import { closeWindow, isDesktop, onCloseRequested, project, useProject } from './desktop';
 import { store, useEditorState } from './store';
 
 /**
@@ -70,11 +75,41 @@ export function App() {
     if (location.pathname !== target) history.replaceState(null, '', target);
   }, [state.current?.slug]);
 
-  // Save anything still queued before the tab goes away.
+  // Never let unsaved edits go quietly.
+  //
+  // In the desktop app the close is ours to hold: Tauri waits for the handler,
+  // so the app's own dialog can ask, and the window is destroyed afterwards
+  // only if the user is happy to leave. A browser tab gets the one prompt it
+  // allows instead — the wording there belongs to the browser.
   useEffect(() => {
-    const flush = () => void store.flush();
-    window.addEventListener('beforeunload', flush);
-    return () => window.removeEventListener('beforeunload', flush);
+    if (DESKTOP) return;
+    const onUnload = (event: BeforeUnloadEvent) => {
+      if (!store.getState().dirty) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onUnload);
+    return () => window.removeEventListener('beforeunload', onUnload);
+  }, []);
+
+  useEffect(() => {
+    if (!DESKTOP) return;
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+
+    void onCloseRequested(async (event) => {
+      if (!store.getState().dirty) return;
+      event.preventDefault();
+      if (await store.confirmDiscard('close')) await closeWindow();
+    }).then((off) => {
+      if (disposed) off();
+      else unlisten = off;
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -84,11 +119,12 @@ export function App() {
       const key = event.key.toLowerCase();
       if (key === 'z') {
         event.preventDefault();
-        void (event.shiftKey ? store.redo() : store.undo());
+        if (event.shiftKey) store.redo();
+        else store.undo();
       }
       if (key === 's') {
         event.preventDefault();
-        void store.flush();
+        void store.save();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -116,14 +152,26 @@ export function App() {
   return (
     <div className="app">
       <Toolbar onNewDiagram={openDialog} onOpenSettings={openSettings} />
-      <div className={`workspace${state.current ? '' : ' no-inspector'}`}>
+      <div
+        className={`workspace${state.current && state.view === 'diagram' ? '' : ' no-inspector'}`}
+      >
         <Sidebar onNewDiagram={openDialog} />
         <div className="canvas-area">
-          {state.current ? <Canvas /> : <EmptyState loading={state.loading} onNew={openDialog} />}
-          <BottomPanel />
+          {state.current ? (
+            state.view === 'client' ? (
+              <ClientView />
+            ) : state.view === 'design' ? (
+              <DesignView />
+            ) : (
+              <Canvas />
+            )
+          ) : (
+            <EmptyState loading={state.loading} onNew={openDialog} />
+          )}
+          {state.view === 'diagram' ? <BottomPanel /> : null}
           <Notices />
         </div>
-        {state.current ? (
+        {state.current && state.view === 'diagram' ? (
           <aside className="inspector">
             <Inspector />
           </aside>
@@ -131,18 +179,30 @@ export function App() {
       </div>
       {dialogOpen ? <NewDiagramDialog onClose={() => setDialogOpen(false)} /> : null}
       {settingsOpen ? <McpSettings onClose={() => setSettingsOpen(false)} /> : null}
+      <ClientPresentation />
+      <ImportDialog />
+      <UnsavedDialog />
     </div>
   );
 }
 
 function Notices() {
-  const { error, externalEdit } = useEditorState();
+  const { error, externalEdit, notice } = useEditorState();
 
+  // A notice that the canvas is already up to date can go on its own. One that
+  // says the file and the canvas have diverged is the user's to dismiss.
   useEffect(() => {
-    if (!externalEdit) return;
+    if (!externalEdit?.applied) return;
     const timer = window.setTimeout(() => store.dismissExternalEdit(), 5000);
     return () => window.clearTimeout(timer);
   }, [externalEdit]);
+
+  // An import or export that worked needs saying once, not acknowledging.
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => store.dismissNotice(), 6000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   if (error) {
     return (
@@ -154,10 +214,36 @@ function Notices() {
       </div>
     );
   }
-  if (externalEdit) {
+  if (notice) {
+    return (
+      <div className="toast info">
+        <span>{notice}</span>
+        <button className="btn subtle small" onClick={() => store.dismissNotice()}>
+          Dismiss
+        </button>
+      </div>
+    );
+  }
+  if (externalEdit?.applied) {
     return (
       <div className="toast info">
         <span>This diagram was just updated outside the editor — the canvas is up to date.</span>
+      </div>
+    );
+  }
+  if (externalEdit) {
+    return (
+      <div className="toast info">
+        <span>
+          This diagram changed outside the editor. Your unsaved changes are still here — saving
+          will overwrite the file.
+        </span>
+        <button className="btn subtle small" onClick={() => void store.reload()}>
+          Discard mine
+        </button>
+        <button className="btn subtle small" onClick={() => store.dismissExternalEdit()}>
+          Dismiss
+        </button>
       </div>
     );
   }
@@ -176,7 +262,15 @@ function EmptyState({ loading, onNew }: { loading: boolean; onNew: () => void })
   }
 
   return (
-    <div className="empty">
+    <div
+      className="empty"
+      onContextMenu={(event) => {
+        // The only thing to do from here is start a diagram — unless the user
+        // has text selected, in which case the editing menu is the useful one.
+        if (event.defaultPrevented || window.getSelection()?.toString()) return;
+        showContextMenu(event, [{ label: 'New diagram…', onSelect: onNew }]);
+      }}
+    >
       <div className="inner">
         <h2>{diagrams.length ? 'Pick a diagram' : 'Design your project first'}</h2>
         {diagrams.length ? (

@@ -1,29 +1,50 @@
+import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
   BLOCK_TYPES,
+  DesignStore,
   DiagramStore,
   addBlocks,
   addEdges,
   applyBatch,
+  applyClientView,
   autoLayout,
   buildOrder,
+  buildProjectTree,
   deleteBlocks,
   deleteEdges,
+  deriveClientView,
+  describeClientViewDiff,
   describeSchemaError,
   diagramStats,
+  diffClientView,
+  editClientView,
+  ensureClientView,
   exportDiagram,
   findBlock,
   generateBlockSpec,
   generateSpec,
+  importDiagram,
   markImplemented,
+  parseTransfer,
+  planImport,
+  reconcileClientView,
+  renderClientView,
   moveBlocks,
+  treeToMarkdown,
+  treeToText,
   updateBlock,
   updateEdge,
   validateDiagram,
   type BatchOperation,
+  type ClientViewOperation,
   type Diagram,
+  type TreeFilter,
+  type TreeOptions,
 } from '@diagram-plus/core';
+import { registerDesignTools } from './design-tools.js';
 import {
   allBlockTypesHint,
   allEdgeTypesHint,
@@ -36,6 +57,7 @@ import {
   blockPatchSchema,
   blockRef,
   blockTypeEnum,
+  clientViewOperationSchema,
   diagramRef,
   edgeInputSchema,
   edgeTypeEnum,
@@ -46,6 +68,11 @@ export const DEFAULT_EDITOR_PORT = 4517;
 
 export interface McpServerOptions {
   store: DiagramStore;
+  /**
+   * The screen designs beside each diagram. Optional so an embedder with only
+   * a diagram store still gets a working server, minus the design tools.
+   */
+  designs?: DesignStore;
   /** URL of the local editor, used in hints back to the user. */
   editorUrl?: string;
 }
@@ -101,13 +128,22 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         'connected by typed relationships. The user reviews and edits the same diagram in a',
         'visual editor, so keep names and details clear enough for a person to read.',
         '',
+        'Three documents describe one project, and they share a slug:',
+        '- the diagram — what the application is, as typed blocks and connections;',
+        '- the client view — the same thing in plain words, for review with a client;',
+        '- the screen designs — what each screen actually looks like, as a typed layout tree.',
+        'Implementing means building from all three.',
+        '',
         'Typical flow:',
         '1. create_diagram_from_outline — turn the user\'s idea into a first diagram.',
         '2. The user opens the editor, edits it, and marks it ready.',
-        '3. read_implementation_spec — get the full spec, then build the project from it.',
-        '4. mark_block_implemented — record progress as each piece is written.',
+        '3. set_design_system, then sync_screen_designs, then design_screen for each screen —',
+        '   the interface, drawn against tokens rather than raw colours.',
+        '4. read_implementation_spec — the full spec with the designs folded in, then build it.',
+        '5. mark_block_implemented — record progress as each piece is written.',
         '',
-        'Call describe_block_schema first if you are unsure what a block type can hold.',
+        'Call describe_block_schema before building a diagram if you are unsure what a block type',
+        'can hold, and describe_design_schema before drawing a screen.',
       ].join('\n'),
     },
   );
@@ -299,23 +335,59 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     {
       title: 'Read the implementation spec',
       description:
-        'Return the full Markdown specification for a diagram: goal, tech stack, build order, ' +
-        'every data model, endpoint, service and screen with its fields, plus the open gaps. ' +
-        'This is what you implement the project from.',
+        'Return the full Markdown specification for a diagram: goal, tech stack, design system, ' +
+        'build order, every data model, endpoint, service and screen with its fields, and — for ' +
+        'every screen that has been designed — its full layout, element by element, with what ' +
+        'each one is bound to and what using it does. This is what you implement the project ' +
+        'from, interface included.',
       inputSchema: {
         diagram: diagramRef,
         includeDiagram: z.boolean().optional().describe('Include the Mermaid overview. Default true.'),
+        includeDesign: z
+          .boolean()
+          .optional()
+          .describe('Include the screen designs. Default true when the project has any.'),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ diagram, includeDiagram = true }) =>
-      withDiagram(diagram, (d) => {
-        const spec = generateSpec(d, { includeDiagram });
-        const preamble =
-          d.status === 'draft'
-            ? 'Note: this diagram is still a draft. Confirm with the user before writing code from it.\n\n'
-            : '';
-        return text(preamble + spec);
+    async ({ diagram, includeDiagram = true, includeDesign = true }) =>
+      withDiagram(diagram, async (d) => {
+        // The designs live in their own file, so they are fetched rather than
+        // read off the diagram — and their absence is not an error: plenty of
+        // projects are built from the graph alone.
+        const design =
+          includeDesign && options.designs
+            ? await options.designs.find(d.slug).catch(() => null)
+            : null;
+
+        const spec = generateSpec(d, { includeDiagram, design });
+        const notes: string[] = [];
+        if (d.status === 'draft') {
+          notes.push(
+            'Note: this diagram is still a draft. Confirm with the user before writing code from it.',
+          );
+        }
+        if (!design && options.designs) {
+          notes.push(
+            'No screens have been designed yet. Run sync_screen_designs to seed a wireframe per ' +
+              'screen from the diagram, then design_screen to draw them — otherwise you will be ' +
+              'inventing the interface as you build it.',
+          );
+        }
+        if (design?.screens.length) {
+          const unapproved = design.screens.filter((s) => s.status !== 'approved');
+          notes.push(
+            'The screen outlines below are the design the user reviewed. Build each approved ' +
+              'screen element for element: the same elements, the same nesting and order, the ' +
+              'same words, the same bindings and actions. Translate the layout into this stack\'s ' +
+              'idiom, never a different screen. If one cannot be built as drawn, say which and why.' +
+              (unapproved.length
+                ? `\n\n${unapproved.length} of ${design.screens.length} screen(s) are not approved ` +
+                  `yet (${unapproved.map((s) => s.name).join(', ')}). Ask the user before building those.`
+                : ''),
+          );
+        }
+        return text((notes.length ? `${notes.join('\n\n')}\n\n` : '') + spec);
       }),
   );
 
@@ -354,7 +426,13 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       description: 'Export a diagram as a Mermaid flowchart, a Markdown document, or raw JSON.',
       inputSchema: {
         diagram: diagramRef,
-        format: z.enum(['mermaid', 'markdown', 'json']).optional().describe('Defaults to mermaid.'),
+        format: z
+          .enum(['mermaid', 'markdown', 'json', 'tree', 'tree-markdown'])
+          .optional()
+          .describe(
+            'Defaults to mermaid. "tree" and "tree-markdown" render the client view — ' +
+              'see read_project_tree for the options that shape it.',
+          ),
       },
       annotations: { readOnlyHint: true },
     },
@@ -362,6 +440,297 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       withDiagram(diagram, (d) =>
         text(block(`"${d.name}" as ${format}:`, exportDiagram(d, format), format === 'json' ? 'json' : format)),
       ),
+  );
+
+  /**
+   * The client view.
+   *
+   * The full diagram is the wrong thing to put in front of someone who did not
+   * draw it, and `read_implementation_spec` is far too much. This is the same
+   * file read as a tree of what a person can do, with endpoints, services and
+   * tables folded away and the decisions turned into readable branches.
+   */
+  server.registerTool(
+    'read_project_tree',
+    {
+      title: 'Read the diagram as a project tree',
+      description:
+        'Turn a diagram into a plain tree of what the application does — screens, the actions ' +
+        'on them, and the conditions that decide what happens next — with the technical blocks ' +
+        'folded away. Use it when the user wants to explain or review the design with someone ' +
+        'non-technical, rather than build from it.',
+      inputSchema: {
+        diagram: diagramRef,
+        audience: z
+          .enum(['client', 'technical'])
+          .optional()
+          .describe(
+            'client (default) folds endpoints, services and data models away; ' +
+              'technical keeps every block.',
+          ),
+        format: z
+          .enum(['text', 'markdown'])
+          .optional()
+          .describe('Defaults to text — an indented tree. markdown gives headings and bullets.'),
+        showConditions: z
+          .boolean()
+          .optional()
+          .describe('Turn decisions and conditional connections into branches. Default true.'),
+        showData: z.boolean().optional().describe('Include data models and datastores. Default false.'),
+        maxDepth: z.number().int().positive().optional().describe('How deep to follow a flow. Default 8.'),
+        roots: z
+          .enum(['auto', 'flat', 'groups'])
+          .optional()
+          .describe('groups buckets the top level by group; auto (default) does that only if groups exist.'),
+        types: z
+          .array(blockTypeEnum)
+          .optional()
+          .describe('Only let these block types appear. Everything else still conducts the flow.'),
+        groups: z.array(z.string()).optional().describe('Only blocks in these groups, by id or name.'),
+        tags: z.array(z.string()).optional().describe('Only blocks carrying one of these tags.'),
+        status: z
+          .array(z.enum(['todo', 'in_progress', 'done', 'blocked']))
+          .optional()
+          .describe('Only blocks in these implementation states.'),
+        search: z.string().optional().describe('Only blocks whose name, summary or description matches.'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ diagram, format = 'text', types, groups, tags, status, search, ...rest }) =>
+      withDiagram(diagram, (d) => {
+        const filter: TreeFilter = {};
+        if (types?.length) filter.types = types;
+        if (groups?.length) filter.groups = groups;
+        if (tags?.length) filter.tags = tags;
+        if (status?.length) filter.status = status;
+        if (search) filter.search = search;
+
+        const options: TreeOptions = { ...rest };
+        if (Object.keys(filter).length) options.filter = filter;
+
+        const tree = buildProjectTree(d, options);
+        const body = format === 'markdown' ? treeToMarkdown(tree) : treeToText(tree);
+        return text(
+          [
+            `"${d.name}" as a project tree (${tree.nodeCount} steps, ${tree.audience} view):`,
+            '',
+            body,
+            tree.omitted.length
+              ? `${tree.omitted.length} block(s) were left out by the filter.`
+              : '',
+            `Show it to the user at ${editorUrl}/d/${d.slug} — the Client view button opens the same tree.`,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        );
+      }),
+  );
+
+  /* ================================================================ *
+   * The client view
+   * ================================================================ */
+
+  /**
+   * The client view is a second document, stored inside the diagram: the same
+   * project as plain boxes and arrows, which the user edits in front of their
+   * client. It drifts from the technical diagram on purpose — that drift is
+   * the record of what the client asked for — and these four tools are how it
+   * is read, changed, and brought back into line in either direction.
+   */
+  server.registerTool(
+    'read_client_view',
+    {
+      title: 'Read the client view',
+      description:
+        'Read the plain-language view the user reviews with their client: boxes, arrows, the ' +
+        'conditions between them, and — the important part — what the client changed that the ' +
+        'technical diagram does not have yet. Read this before applying anything.',
+      inputSchema: {
+        diagram: diagramRef,
+        refresh: z
+          .boolean()
+          .optional()
+          .describe(
+            'Rebuild it from the diagram first, keeping the client\'s edits. Off by default so ' +
+              'reading never changes anything.',
+          ),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ diagram, refresh = false }) =>
+      withDiagram(diagram, (d) => {
+        const view = refresh
+          ? reconcileClientView(d, ensureClientView(d)).view
+          : ensureClientView(d);
+        const changes = diffClientView(d, view);
+        return text(
+          [
+            renderClientView(d, view),
+            '',
+            changes.hasChanges
+              ? 'Use apply_client_view to carry these into the technical diagram, or ' +
+                'update_client_view to change the client view itself.'
+              : '',
+            `The user reviews this at ${editorUrl}/d/${d.slug} — the Client view tab.`,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        );
+      }),
+  );
+
+  server.registerTool(
+    'update_client_view',
+    {
+      title: 'Edit the client view',
+      description:
+        'Change the client view itself — add, reword, remove or reconnect boxes, or set the ' +
+        'walkthrough order. Use it to prepare a view before a review, or to write up what was ' +
+        'agreed in one. It does not touch the technical diagram; apply_client_view does that.',
+      inputSchema: {
+        diagram: diagramRef,
+        operations: z
+          .array(clientViewOperationSchema)
+          .min(1)
+          .describe('Edits, applied in order. Later ones can refer to boxes added by earlier ones.'),
+      },
+    },
+    async ({ diagram, operations }) =>
+      mutate(diagram, (draft) => {
+        const result = editClientView(ensureClientView(draft), operations as ClientViewOperation[]);
+        draft.clientView = result.view;
+        const lines = [
+          `Applied ${result.applied} of ${operations.length} edit(s) to the client view.`,
+        ];
+        if (result.errors.length) {
+          lines.push(
+            ...result.errors.map((e) => `  operation ${e.index} (${e.op}): ${e.message}`),
+          );
+        }
+        lines.push('', describeClientViewDiff(diffClientView(draft, result.view)));
+        return lines.join('\n');
+      }),
+  );
+
+  server.registerTool(
+    'sync_client_view',
+    {
+      title: 'Bring the client view up to date with the diagram',
+      description:
+        'Rebuild the client view from the technical diagram without losing what the client did ' +
+        'to it: their wording is kept, their boxes are kept, their deletions stay deleted. Use ' +
+        'it after changing the diagram, so the next review shows the current design.',
+      inputSchema: {
+        diagram: diagramRef,
+        audience: z
+          .enum(['client', 'technical'])
+          .optional()
+          .describe('client (default) folds endpoints, services and data models away.'),
+        showConditions: z
+          .boolean()
+          .optional()
+          .describe('Turn decisions and conditional connections into branches. Default true.'),
+        showData: z.boolean().optional().describe('Include data models and datastores. Default false.'),
+        rebuild: z
+          .boolean()
+          .optional()
+          .describe(
+            'Throw the current client view away and derive a fresh one. Loses every edit made ' +
+              'in front of the client, so ask first.',
+          ),
+        types: z.array(blockTypeEnum).optional().describe('Only let these block types appear.'),
+        groups: z.array(z.string()).optional().describe('Only blocks in these groups, by id or name.'),
+        tags: z.array(z.string()).optional().describe('Only blocks carrying one of these tags.'),
+        search: z.string().optional().describe('Only blocks whose name or summary matches.'),
+      },
+    },
+    async ({ diagram, rebuild = false, types, groups, tags, search, ...rest }) =>
+      mutate(diagram, (draft) => {
+        const filter: TreeFilter = {};
+        if (types?.length) filter.types = types;
+        if (groups?.length) filter.groups = groups;
+        if (tags?.length) filter.tags = tags;
+        if (search) filter.search = search;
+        const options: TreeOptions = { ...rest };
+        if (Object.keys(filter).length) options.filter = filter;
+
+        if (rebuild || !draft.clientView) {
+          draft.clientView = deriveClientView(draft, options);
+          return `Built a fresh client view: ${draft.clientView.nodes.length} boxes, ${draft.clientView.edges.length} arrows.`;
+        }
+
+        const result = reconcileClientView(draft, draft.clientView, options);
+        draft.clientView = result.view;
+        const lines = [
+          `The client view is up to date: ${result.view.nodes.length} boxes, ${result.view.edges.length} arrows.`,
+        ];
+        if (result.added.length) lines.push(`  new from the diagram: ${result.added.join(', ')}`);
+        if (result.updated.length) lines.push(`  reworded from the diagram: ${result.updated.join(', ')}`);
+        if (result.orphaned.length) {
+          lines.push(`  their block has gone: ${result.orphaned.join(', ')}`);
+        }
+        lines.push('', describeClientViewDiff(diffClientView(draft, result.view)));
+        return lines.join('\n');
+      }),
+  );
+
+  server.registerTool(
+    'apply_client_view',
+    {
+      title: 'Apply the client view to the technical diagram',
+      description:
+        'Carry what the client changed into the real diagram: their new boxes become blocks ' +
+        'tagged from-client, their rewordings become block names, their arrows become ' +
+        'connections. The new blocks arrive thin — fill in the endpoint, the fields and the ' +
+        'wiring afterwards. Run with dryRun first if you want to see the plan.',
+      inputSchema: {
+        diagram: diagramRef,
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe('List the operations without running them.'),
+        includeRemovals: z
+          .boolean()
+          .optional()
+          .describe(
+            'Also delete the blocks the client removed. Off by default — a deletion is the one ' +
+              'thing that cannot be undone from the other document.',
+          ),
+      },
+    },
+    async ({ diagram, dryRun = false, includeRemovals = false }) => {
+      if (dryRun) {
+        return withDiagram(diagram, (d) => {
+          const result = applyClientView(d, { includeRemovals, dryRun: true });
+          if (!result.operations.length) return text(result.summary);
+          return text(
+            block(
+              `${result.summary} Nothing has been changed.`,
+              JSON.stringify(result.operations, null, 2),
+            ),
+          );
+        });
+      }
+
+      return mutate(diagram, (draft) => {
+        const result = applyClientView(draft, { includeRemovals });
+        const lines = [result.summary];
+        if (result.batch?.errors.length) {
+          lines.push(
+            ...result.batch.errors.map((e) => `  operation ${e.index} (${e.op}): ${e.message}`),
+          );
+        }
+        if (result.batch?.createdBlocks.length) {
+          lines.push(
+            '',
+            'These blocks came from the client and have nothing but a name and a line:',
+            ...result.batch.createdBlocks.map((b) => `  ${b.name} (${b.type})`),
+            'Fill them in with update_block, and connect them to the rest.',
+          );
+        }
+        return lines.join('\n');
+      });
+    },
   );
 
   /* ================================================================ *
@@ -648,6 +1017,91 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     },
   );
 
+  /**
+   * The way a diagram gets back into a project it did not come from.
+   *
+   * Someone with the app but no repository access edits the design and sends
+   * the file back; this is what puts it where the rest of the tools can see
+   * it. It refuses to overwrite unless told to in the same call, because the
+   * thing it would overwrite is a file in the user's repository and the user
+   * is not the one making this call.
+   */
+  server.registerTool(
+    'import_diagram',
+    {
+      title: 'Import a diagram file',
+      description:
+        'Bring a diagram exported from another project into this one. Use it when the user has ' +
+        'been sent a .diagram.json file, or a .diagrams.json bundle of several, and wants it in ' +
+        'their project. Called without "action" it writes nothing and reports what each file ' +
+        'would land on, so you can ask the user before anything is overwritten.',
+      inputSchema: {
+        file: z
+          .string()
+          .describe('Path to the file. Absolute, or relative to the project root.'),
+        action: z
+          .enum(['replace', 'copy'])
+          .optional()
+          .describe(
+            'What to do about a diagram that is already in this project. "replace" overwrites ' +
+              'it, "copy" adds the incoming one alongside. Omit to see what would happen first. ' +
+              'Only ever set this after the user has said which they want.',
+          ),
+      },
+      annotations: { destructiveHint: true },
+    },
+    async ({ file, action }) => {
+      let candidates;
+      try {
+        const resolved = path.resolve(store.root, file);
+        const parsed = parseTransfer(await readFile(resolved, 'utf8'), path.basename(resolved));
+        candidates = planImport(
+          parsed.diagrams.map((diagram) => ({ diagram, file: path.basename(resolved) })),
+          await store.list(),
+        );
+      } catch (err) {
+        return fail(errorMessage(err));
+      }
+
+      const clashes = candidates.filter((candidate) => candidate.existing);
+      if (clashes.length && !action) {
+        const lines = clashes.map(
+          (clash) =>
+            `- "${clash.incoming.name}" (${diagramStats(clash.incoming).blocks} blocks) would land on ` +
+            `"${clash.existing?.name}" (${clash.existing?.slug}, ${clash.existing?.blockCount} blocks, ` +
+            `last edited ${clash.existing?.updatedAt}), matched by ${clash.matchedBy}.`,
+        );
+        return text(
+          `Nothing was written. ${clashes.length} of the ${candidates.length} diagram(s) in that ` +
+            `file already exist here:\n\n${lines.join('\n')}\n\n` +
+            `Ask the user whether to overwrite theirs, then call this again with ` +
+            `action="replace" — or action="copy" to keep both.`,
+        );
+      }
+
+      const done: string[] = [];
+      for (const candidate of candidates) {
+        try {
+          const outcome = await importDiagram(store, {
+            incoming: candidate.incoming,
+            action: candidate.existing ? (action as 'replace' | 'copy') : 'copy',
+            target: candidate.existing?.slug,
+          });
+          done.push(
+            `${outcome.replaced ? 'Replaced' : 'Added'} "${outcome.diagram.name}" ` +
+              `(${outcome.diagram.slug}) -> ${outcome.file}`,
+          );
+        } catch (err) {
+          // Say what did land before the failure, so nothing has to be guessed.
+          return fail(
+            [...done, `Failed on "${candidate.incoming.name}": ${errorMessage(err)}`].join('\n'),
+          );
+        }
+      }
+      return text(done.join('\n') || 'That file contained no diagrams.');
+    },
+  );
+
   server.registerTool(
     'delete_diagram',
     {
@@ -761,6 +1215,16 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   );
 
   /* ================================================================ *
+   * Screen designs
+   * ================================================================ */
+
+  // Registered from their own module: the design vocabulary is large enough
+  // that folding it in here would bury the diagram tools it sits beside.
+  if (options.designs) {
+    registerDesignTools(server, { store, designs: options.designs, editorUrl });
+  }
+
+  /* ================================================================ *
    * Resources and prompts
    * ================================================================ */
 
@@ -824,12 +1288,18 @@ export function createMcpServer(options: McpServerOptions): McpServer {
             text: [
               `Build the project described by the "${diagram}" diagram.`,
               '',
-              '1. Call read_implementation_spec to get the full specification.',
+              '1. Call read_implementation_spec to get the full specification — it includes the',
+              '   design system and the layout of every screen that has been designed.',
               '2. Follow its build order — configuration and data models first, screens last.',
               '3. Implement each block exactly as specified: the field names, routes, parameters and',
               '   steps in the diagram are the contract. If something is genuinely missing, ask me',
               '   rather than inventing it.',
-              '4. After each block is written, call mark_block_implemented with the files you created.',
+              '4. Build the interface from the designs, not from your own idea of the screen. Set',
+              '   the design tokens up once — as CSS variables, a theme object, whatever the stack',
+              '   wants — and build each screen from its outline: the elements in that order, the',
+              '   words as written, each field wired to the binding and each button to its action.',
+              '   If a screen has no design, call design_screen and draw it before building it.',
+              '5. After each block is written, call mark_block_implemented with the files you created.',
             ].join('\n'),
           },
         },

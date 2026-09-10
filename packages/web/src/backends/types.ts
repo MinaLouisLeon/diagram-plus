@@ -1,7 +1,12 @@
 import type {
   BatchOperation,
+  ImportAction,
   BlockTypeInfo,
   BlockCategory,
+  DesignDiff,
+  DesignDocument,
+  DesignOperation,
+  DesignProgress,
   Diagram,
   DiagramSummary,
   EdgeTypeInfo,
@@ -23,6 +28,17 @@ export interface Catalog {
   categories: { id: BlockCategory; label: string }[];
   edgeTypes: EdgeTypeInfo[];
   colors: Record<string, string>;
+}
+
+/** What comes back from any of the design endpoints. */
+export interface DesignResult {
+  design: DesignDocument;
+  changes?: DesignDiff;
+  progress?: DesignProgress;
+  /** False while the designs are only derived and have never been saved. */
+  saved?: boolean;
+  result?: { applied: number; errors: unknown[] };
+  report?: { added: string[]; updated: string[]; orphaned: string[] };
 }
 
 export class ApiError extends Error {
@@ -52,6 +68,18 @@ export interface Api {
   deleteDiagram(slug: string): Promise<{ deleted: string }>;
   patchDiagram(slug: string, body: Record<string, unknown>): Promise<{ diagram: Diagram }>;
   replaceDiagram(slug: string, diagram: Diagram): Promise<{ diagram: Diagram }>;
+  /**
+   * Write a diagram that came from another project.
+   *
+   * The file is read and the collision resolved in the editor, so this only
+   * carries out a decision the user has already seen and made. `target` is the
+   * diagram being overwritten, and is required to replace.
+   */
+  importDiagram(body: {
+    diagram: Diagram;
+    action: Exclude<ImportAction, 'skip'>;
+    target?: string;
+  }): Promise<{ diagram: Diagram; action: string; replaced: string | null }>;
   batch(
     slug: string,
     operations: BatchOperation[],
@@ -64,12 +92,40 @@ export interface Api {
     slug: string,
     format: 'mermaid' | 'markdown' | 'json',
   ): Promise<{ format: string; content: string }>;
+
+  /* ---- the screen designs ------------------------------------------- */
+
+  /**
+   * Read the designs. A project that has never been designed gets a document
+   * derived from the diagram without anything being written, so opening the
+   * tab to look never creates a file.
+   */
+  getDesign(slug: string): Promise<DesignResult>;
+  /** Replace the whole document — what undo/redo and a canvas save send. */
+  replaceDesign(slug: string, design: DesignDocument): Promise<DesignResult>;
+  /** Apply design operations, the vocabulary the MCP tools also use. */
+  designOps(
+    slug: string,
+    operations: DesignOperation[],
+    layout?: boolean,
+  ): Promise<DesignResult>;
+  /** Seed designs for new screens, keeping everything already drawn. */
+  syncDesign(slug: string, rebuild?: boolean): Promise<DesignResult>;
+  arrangeDesign(slug: string, includePinned?: boolean): Promise<DesignResult>;
 }
 
 export type LiveMessage =
   | { type: 'hello'; diagrams: DiagramSummary[]; root: string }
   | { type: 'diagram:changed'; slug: string; revision: number; source: string; diagram: Diagram }
-  | { type: 'diagram:deleted'; slug: string };
+  | { type: 'diagram:deleted'; slug: string }
+  | {
+      type: 'design:changed';
+      slug: string;
+      revision: number;
+      source: string;
+      design: DesignDocument;
+    }
+  | { type: 'design:deleted'; slug: string };
 
 export interface LiveConnection {
   close: () => void;

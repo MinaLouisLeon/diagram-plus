@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -53,6 +53,7 @@ describe('tool surface', () => {
       'validate_diagram',
       'set_diagram_status',
       'mark_block_implemented',
+      'import_diagram',
       'implementation_progress',
     ]) {
       expect(names, `tool ${expected}`).toContain(expected);
@@ -355,5 +356,80 @@ describe('payload hints', () => {
     expect(description).toContain('params: [{ name, type, required, description, example }]');
     // And config really does take `keys`, not `entries`.
     expect(description).toMatch(/config — .*keys: \[\{ name, description, required, secret, example \}\]/);
+  });
+});
+
+describe('import_diagram', () => {
+  /** A file as it would arrive from someone outside the project. */
+  async function incomingFile(name: string, body: Record<string, unknown>): Promise<string> {
+    const file = path.join(root, name);
+    await writeFile(file, JSON.stringify(body, null, 2), 'utf8');
+    return file;
+  }
+
+  it('adds a diagram this project has never seen', async () => {
+    const source = await mkdtemp(path.join(os.tmpdir(), 'diagram-plus-src-'));
+    const { diagram } = await new DiagramStore({ root: source }).create({ name: 'Sent Over' });
+    const file = await incomingFile('sent-over.diagram.json', diagram);
+
+    const { text, isError } = await call('import_diagram', { file });
+    expect(isError).toBe(false);
+    expect(text).toContain('Added "Sent Over"');
+    expect(await store.listSlugs()).toEqual(['sent-over']);
+    await rm(source, { recursive: true, force: true });
+  });
+
+  it('reports a clash and writes nothing when not told what to do', async () => {
+    const { diagram } = await store.create({ name: 'Shared Design' });
+    const file = await incomingFile('shared.diagram.json', {
+      ...diagram,
+      name: 'Shared Design v2',
+      description: 'edited elsewhere',
+    });
+
+    const { text, isError } = await call('import_diagram', { file });
+    expect(isError).toBe(false);
+    expect(text).toContain('Nothing was written');
+    expect(text).toContain('matched by id');
+    // Still exactly one diagram, still untouched.
+    expect(await store.listSlugs()).toEqual(['shared-design']);
+    expect((await store.readBySlug('shared-design')).description).toBe('');
+  });
+
+  it('replaces in place once told to', async () => {
+    const { diagram } = await store.create({ name: 'Shared Design' });
+    const file = await incomingFile('shared.diagram.json', {
+      ...diagram,
+      name: 'Shared Design v2',
+      description: 'edited elsewhere',
+      revision: 99,
+    });
+
+    const { text } = await call('import_diagram', { file, action: 'replace' });
+    expect(text).toContain('Replaced "Shared Design v2"');
+
+    const saved = await store.readBySlug('shared-design');
+    expect(saved.id).toBe(diagram.id);
+    expect(saved.description).toBe('edited elsewhere');
+    expect(saved.revision).toBe(diagram.revision + 1);
+    expect(await store.listSlugs()).toEqual(['shared-design']);
+  });
+
+  it('keeps both when asked to copy', async () => {
+    const { diagram } = await store.create({ name: 'Shared Design' });
+    const file = await incomingFile('shared.diagram.json', { ...diagram, notes: 'theirs' });
+
+    await call('import_diagram', { file, action: 'copy' });
+    expect((await store.listSlugs()).sort()).toEqual([
+      'shared-design',
+      'shared-design-imported',
+    ]);
+  });
+
+  it('says so when the file is not a diagram', async () => {
+    const file = await incomingFile('notes.json', { hello: 'world' });
+    const { text, isError } = await call('import_diagram', { file });
+    expect(isError).toBe(true);
+    expect(text).toContain('notes.json');
   });
 });

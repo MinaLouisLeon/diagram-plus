@@ -2,6 +2,9 @@ import type { Diagram } from './diagram.js';
 import type { Block } from './blocks.js';
 import { BLOCK_CATALOG } from './catalog.js';
 import { EDGE_TYPE_INFO } from './edges.js';
+import { buildProjectTree } from './tree.js';
+import type { TreeOptions } from './fold.js';
+import { treeToMarkdown, treeToText } from './tree-render.js';
 
 /**
  * Exports. Mermaid is the useful one — it renders in GitHub, in Claude's
@@ -104,9 +107,27 @@ export function toMermaid(diagram: Diagram, options: MermaidOptions = {}): strin
   return lines.join('\n');
 }
 
-export type ExportFormat = 'mermaid' | 'markdown' | 'json';
+export const EXPORT_FORMATS = ['mermaid', 'markdown', 'json', 'tree', 'tree-markdown'] as const;
+export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 
-export function exportDiagram(diagram: Diagram, format: ExportFormat): string {
+export function isExportFormat(value: string): value is ExportFormat {
+  return (EXPORT_FORMATS as readonly string[]).includes(value);
+}
+
+/** The extension each format wants when it is written to a file. */
+export const EXPORT_EXTENSION: Record<ExportFormat, string> = {
+  mermaid: 'mmd',
+  markdown: 'md',
+  json: 'json',
+  tree: 'txt',
+  'tree-markdown': 'md',
+};
+
+export function exportDiagram(
+  diagram: Diagram,
+  format: ExportFormat,
+  treeOptions: TreeOptions = {},
+): string {
   switch (format) {
     case 'mermaid':
       return toMermaid(diagram);
@@ -114,6 +135,10 @@ export function exportDiagram(diagram: Diagram, format: ExportFormat): string {
       return `${JSON.stringify(diagram, null, 2)}\n`;
     case 'markdown':
       return toMermaidDocument(diagram);
+    case 'tree':
+      return treeToText(buildProjectTree(diagram, treeOptions));
+    case 'tree-markdown':
+      return treeToMarkdown(buildProjectTree(diagram, treeOptions));
   }
 }
 

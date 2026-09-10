@@ -1,4 +1,5 @@
 import { diagramStats } from '@diagram-plus/core/browser';
+import { contextMenu, separator } from '../context-menu';
 import { isDesktop, project, useProject } from '../desktop';
 import { store, useEditorState } from '../store';
 
@@ -11,7 +12,21 @@ interface ToolbarProps {
 }
 
 export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
-  const { current, connection, saving, panel, canUndo, canRedo, validation } = useEditorState();
+  const {
+    current,
+    connection,
+    saving,
+    dirty,
+    panel,
+    view,
+    canUndo,
+    canRedo,
+    validation,
+    diagrams,
+    designSaving,
+    designDirty,
+    designProgress,
+  } = useEditorState();
   const { root } = useProject();
   const stats = current ? diagramStats(current) : null;
   const errorCount = validation?.errors.length ?? 0;
@@ -27,7 +42,11 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
       {desktop && root ? (
         <button
           className="btn subtle project-switch"
-          onClick={() => void project.pick()}
+          onClick={() =>
+            void store.confirmDiscard('project').then((ok) => {
+              if (ok) void project.pick();
+            })
+          }
           title={`${root}\n\nClick to open a different project`}
         >
           {root.replace(/^.*[\\/]/, '') || root}
@@ -45,6 +64,35 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
             </span>
           </div>
           <span className={`pill ${current.status}`}>{current.status}</span>
+
+          {/* Three documents describing one project: what it is, how it is
+              explained, and what it looks like. */}
+          <div className="seg" role="group" aria-label="Which view">
+            <button
+              className={`btn small${view === 'diagram' ? ' primary' : ''}`}
+              onClick={() => store.setView('diagram')}
+              title="The technical diagram — every block and connection"
+            >
+              Diagram
+            </button>
+            <button
+              className={`btn small${view === 'client' ? ' primary' : ''}`}
+              onClick={() => store.setView('client')}
+              title="The plain-language view to review with a client, and edit with them"
+            >
+              Client view
+            </button>
+            <button
+              className={`btn small${view === 'design' ? ' primary' : ''}`}
+              onClick={() => store.setView('design')}
+              title="What each screen looks like — the design Claude builds the interface from"
+            >
+              Design
+              {designProgress && designProgress.screens ? (
+                <span>{designProgress.completion}%</span>
+              ) : null}
+            </button>
+          </div>
         </>
       ) : null}
 
@@ -52,15 +100,23 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
 
       {current ? (
         <>
-          <button className="btn subtle icon" title="Undo (Ctrl+Z)" disabled={!canUndo} onClick={() => void store.undo()}>
+          <button className="btn subtle icon" title="Undo (Ctrl+Z)" disabled={!canUndo} onClick={() => store.undo()}>
             ↶
           </button>
-          <button className="btn subtle icon" title="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onClick={() => void store.redo()}>
+          <button className="btn subtle icon" title="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onClick={() => store.redo()}>
             ↷
           </button>
-          <button className="btn" title="Arrange blocks by dependency" onClick={() => void store.runLayout('LR')}>
-            Tidy up
-          </button>
+          {view === 'diagram' ? (
+            <button
+              className="btn"
+              title="Arrange blocks by dependency"
+              onClick={() => store.runLayout('LR')}
+            >
+              Tidy up
+            </button>
+          ) : null}
+          {view === 'diagram' ? (
+            <>
           <button
             className={`btn${panel === 'validation' ? ' primary' : ''}`}
             onClick={() => store.setPanel('validation')}
@@ -88,10 +144,41 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
           >
             Spec
           </button>
+            </>
+          ) : null}
+
+          {view === 'design' ? (
+            <button
+              className="btn"
+              title="Lay the artboards out in a grid"
+              onClick={() => store.tidyDesign()}
+            >
+              Tidy up
+            </button>
+          ) : null}
+          <button
+            className={`btn${dirty || designDirty ? ' primary' : ''}`}
+            disabled={(!dirty && !designDirty) || saving || designSaving}
+            onClick={() => void store.save()}
+            title={
+              dirty || designDirty
+                ? // One button, two files: the diagram and the designs beside it.
+                  `Write your changes to ${
+                    dirty && designDirty
+                      ? 'the diagram and the design files'
+                      : designDirty
+                        ? 'the design file'
+                        : 'the diagram file'
+                  } (Ctrl+S)`
+                : 'Everything is saved'
+            }
+          >
+            {saving || designSaving ? 'Saving…' : 'Save'}
+          </button>
           <button
             className="btn primary"
             onClick={() =>
-              void store.patchMeta({ status: current.status === 'ready' ? 'draft' : 'ready' })
+              store.patchMeta({ status: current.status === 'ready' ? 'draft' : 'ready' })
             }
             title={
               current.status === 'ready'
@@ -107,6 +194,50 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
           + New diagram
         </button>
       )}
+
+      <button
+        className="btn subtle icon"
+        onClick={(event) => {
+          // Anchored under the button rather than at the pointer, so it reads
+          // as that button's menu wherever it was clicked from.
+          const box = event.currentTarget.getBoundingClientRect();
+          contextMenu.open(box.left, box.bottom + 4, [
+            { kind: 'heading', label: 'Share a diagram' },
+            {
+              label: 'Export this diagram…',
+              hint: current ? undefined : 'No diagram open',
+              disabled: !current,
+              onSelect: () => void store.exportCurrent(),
+            },
+            {
+              label: 'Export all diagrams…',
+              hint: diagrams.length ? undefined : 'None in this project',
+              disabled: diagrams.length === 0,
+              onSelect: () => void store.exportAll(),
+            },
+            separator,
+            { kind: 'heading', label: 'Share the client view' },
+            {
+              label: 'Save as Markdown…',
+              hint: current ? undefined : 'No diagram open',
+              disabled: !current,
+              onSelect: () => void store.exportTree('tree-markdown'),
+            },
+            {
+              label: 'Save as plain text…',
+              hint: current ? undefined : 'No diagram open',
+              disabled: !current,
+              onSelect: () => void store.exportTree('tree'),
+            },
+            separator,
+            { label: 'Import from a file…', onSelect: () => void store.beginImport() },
+          ]);
+        }}
+        title="Import or export a diagram file"
+        aria-label="Import or export a diagram file"
+      >
+        ⇅
+      </button>
 
       {desktop && onOpenSettings ? (
         <button
@@ -124,7 +255,9 @@ export function Toolbar({ onNewDiagram, onOpenSettings }: ToolbarProps) {
           connection === 'open'
             ? saving
               ? 'Saving…'
-              : 'Live — changes save automatically'
+              : dirty
+                ? 'Unsaved changes — press Save to write them to the file'
+                : 'Live — everything is saved'
             : `Connection ${connection}`
         }
       />

@@ -2,7 +2,14 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { DiagramStore, summarize, type Diagram } from '@diagram-plus/core';
+import {
+  DesignStore,
+  DiagramStore,
+  NodeDiagramFs,
+  summarize,
+  type DesignDocument,
+  type Diagram,
+} from '@diagram-plus/core';
 import { createApiRouter } from './api.js';
 import { createStaticHandler, assetsExist } from './static.js';
 import { watchDiagrams } from './watcher.js';
@@ -38,6 +45,14 @@ export interface RunningServer {
 type Broadcast =
   | { type: 'diagram:changed'; slug: string; revision: number; source: string; diagram: Diagram }
   | { type: 'diagram:deleted'; slug: string }
+  | {
+      type: 'design:changed';
+      slug: string;
+      revision: number;
+      source: string;
+      design: DesignDocument;
+    }
+  | { type: 'design:deleted'; slug: string }
   | { type: 'hello'; diagrams: ReturnType<typeof summarize>[]; root: string };
 
 function defaultAssetsDir(): string {
@@ -47,7 +62,11 @@ function defaultAssetsDir(): string {
 }
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
+  // One filesystem, two stores: the graph and the screen designs beside it
+  // share a directory, a slug and a watcher, so they are never half-open.
+  const fs = new NodeDiagramFs({ root: options.root });
   const store = new DiagramStore({ root: options.root });
+  const designs = new DesignStore(fs);
   await store.ensureDir();
 
   const assetsDir = options.assetsDir ?? defaultAssetsDir();
@@ -57,6 +76,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const sockets = new Set<WebSocket>();
   /** Last revision pushed per slug, so a save and its watcher echo send once. */
   const lastPushed = new Map<string, number>();
+  const lastPushedDesign = new Map<string, number>();
 
   const broadcast = (message: Broadcast): void => {
     const text = JSON.stringify(message);
@@ -77,11 +97,26 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     });
   };
 
+  const pushDesign = (design: DesignDocument, source: string): void => {
+    if (lastPushedDesign.get(design.slug) === design.revision && source !== 'api') return;
+    lastPushedDesign.set(design.slug, design.revision);
+    broadcast({
+      type: 'design:changed',
+      slug: design.slug,
+      revision: design.revision,
+      source,
+      design,
+    });
+  };
+
   const router = createApiRouter({
     store,
+    designs,
     onChange: (diagram) => pushDiagram(diagram, 'api'),
+    onDesignChange: (design) => pushDesign(design, 'api'),
     onDelete: (slug) => {
       lastPushed.delete(slug);
+      lastPushedDesign.delete(slug);
       broadcast({ type: 'diagram:deleted', slug });
     },
   });
@@ -135,13 +170,25 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
 
   const watcher = watchDiagrams(store, {
-    onChanged: (slug) => {
+    onChanged: (slug, kind) => {
+      if (kind === 'design') {
+        void designs
+          .read(slug)
+          .then((design) => pushDesign(design, 'external'))
+          .catch(() => undefined);
+        return;
+      }
       void store
         .readBySlug(slug)
         .then((diagram) => pushDiagram(diagram, 'external'))
         .catch(() => undefined);
     },
-    onRemoved: (slug) => {
+    onRemoved: (slug, kind) => {
+      if (kind === 'design') {
+        lastPushedDesign.delete(slug);
+        broadcast({ type: 'design:deleted', slug });
+        return;
+      }
       lastPushed.delete(slug);
       broadcast({ type: 'diagram:deleted', slug });
     },

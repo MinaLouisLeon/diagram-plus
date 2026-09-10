@@ -4,7 +4,9 @@ import {
   type BlockType,
   type DiagramSummary,
 } from '@diagram-plus/core/browser';
+import { separator, showContextMenu } from '../context-menu';
 import { store, useEditorState } from '../store';
+import { copyText } from '../text-menu';
 
 /**
  * Left rail: the list of diagrams in the project, and the palette of blocks you
@@ -13,27 +15,44 @@ import { store, useEditorState } from '../store';
 
 export function Sidebar({ onNewDiagram }: { onNewDiagram: () => void }) {
   const [tab, setTab] = useState<'diagrams' | 'palette'>('palette');
-  const { current } = useEditorState();
+  const { current, view } = useEditorState();
+
+  // Blocks are dragged onto the diagram canvas and nowhere else. The design
+  // tab has a palette of its own, and two palettes side by side — one of them
+  // inert — is worse than not offering the second.
+  const canDragBlocks = Boolean(current) && view === 'diagram';
+  const showing = canDragBlocks && tab === 'palette' ? 'palette' : 'diagrams';
 
   return (
     <aside className="sidebar">
       <div className="sidebar-tabs">
         <button
-          className={tab === 'palette' ? 'active' : ''}
+          className={showing === 'palette' ? 'active' : ''}
           onClick={() => setTab('palette')}
-          disabled={!current}
+          disabled={!canDragBlocks}
+          title={canDragBlocks ? undefined : 'Blocks are dragged onto the diagram'}
         >
           Blocks
         </button>
-        <button className={tab === 'diagrams' ? 'active' : ''} onClick={() => setTab('diagrams')}>
+        <button className={showing === 'diagrams' ? 'active' : ''} onClick={() => setTab('diagrams')}>
           Diagrams
         </button>
       </div>
       <div className="sidebar-body">
-        {tab === 'palette' && current ? <Palette /> : <DiagramList onNewDiagram={onNewDiagram} />}
+        {showing === 'palette' ? <Palette /> : <DiagramList onNewDiagram={onNewDiagram} />}
       </div>
     </aside>
   );
+}
+
+/**
+ * Exporting from the list means exporting a diagram that may not be open.
+ * Opening it first keeps one rule — an export is always the diagram on screen,
+ * unsaved edits and all — instead of a second, quieter path to a file.
+ */
+async function exportDiagram(slug: string): Promise<void> {
+  await store.open(slug);
+  if (store.getState().current?.slug === slug) await store.exportCurrent();
 }
 
 function DiagramList({ onNewDiagram }: { onNewDiagram: () => void }) {
@@ -41,10 +60,36 @@ function DiagramList({ onNewDiagram }: { onNewDiagram: () => void }) {
   const [confirming, setConfirming] = useState<DiagramSummary | null>(null);
 
   return (
-    <>
-      <button className="btn primary" style={{ width: '100%' }} onClick={onNewDiagram}>
-        + New diagram
-      </button>
+    <div
+      className="diagram-list"
+      onContextMenu={(event) => {
+        // The rows answer for themselves; this is the space around them. Text
+        // the user has selected is left to the editing menu.
+        if (event.defaultPrevented || window.getSelection()?.toString()) return;
+        showContextMenu(event, [
+          { label: 'New diagram…', onSelect: onNewDiagram },
+          separator,
+          { label: 'Import from a file…', onSelect: () => void store.beginImport() },
+          {
+            label: 'Export all diagrams…',
+            disabled: diagrams.length === 0,
+            onSelect: () => void store.exportAll(),
+          },
+        ]);
+      }}
+    >
+      <div className="diagram-list-actions">
+        <button className="btn primary" onClick={onNewDiagram}>
+          + New diagram
+        </button>
+        <button
+          className="btn"
+          onClick={() => void store.beginImport()}
+          title="Bring in a diagram someone sent you"
+        >
+          Import…
+        </button>
+      </div>
       <div className="section-label">In this project</div>
       {diagrams.length === 0 ? (
         <p className="hint" style={{ padding: '0 4px' }}>
@@ -55,6 +100,28 @@ function DiagramList({ onNewDiagram }: { onNewDiagram: () => void }) {
         <div
           key={diagram.slug}
           className={`diagram-row${current?.slug === diagram.slug ? ' active' : ''}`}
+          onContextMenu={(event) =>
+            showContextMenu(event, [
+              { kind: 'heading', label: diagram.name },
+              {
+                label: 'Open',
+                disabled: current?.slug === diagram.slug,
+                onSelect: () => void store.open(diagram.slug),
+              },
+              separator,
+              {
+                label: 'Export…',
+                hint: current?.slug === diagram.slug ? undefined : 'Opens it first',
+                onSelect: () => void exportDiagram(diagram.slug),
+              },
+              {
+                label: 'Copy file path',
+                onSelect: () => void copyText(`.diagrams/${diagram.slug}.diagram.json`),
+              },
+              separator,
+              { label: 'Delete…', danger: true, onSelect: () => setConfirming(diagram) },
+            ])
+          }
         >
           <button className="diagram-item" onClick={() => void store.open(diagram.slug)}>
             <strong>{diagram.name}</strong>
@@ -76,7 +143,7 @@ function DiagramList({ onNewDiagram }: { onNewDiagram: () => void }) {
       {confirming ? (
         <DeleteDiagramDialog diagram={confirming} onClose={() => setConfirming(null)} />
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -128,7 +195,7 @@ function DeleteDiagramDialog({
 }
 
 function Palette() {
-  const { catalog } = useEditorState();
+  const { catalog, view } = useEditorState();
   if (!catalog) return null;
 
   const onDragStart = (event: DragEvent, type: BlockType) => {
@@ -136,10 +203,32 @@ function Palette() {
     event.dataTransfer.effectAllowed = 'copy';
   };
 
+  const addToCanvas = (type: BlockType) => {
+    // The palette serves both documents: in the client view it is the full
+    // type picker for a box the client has just asked for.
+    if (store.getState().view === 'client') {
+      // No position: added this way it belongs to the auto-layout, not to a
+      // spot on screen the user never chose.
+      store.clientEdit([{ op: 'add_node', type, name: BLOCK_CATALOG[type].defaultName }]);
+      return;
+    }
+    const added = store.apply([
+      {
+        op: 'add_block',
+        block: {
+          type,
+          name: BLOCK_CATALOG[type].defaultName,
+          position: { x: 120, y: 120 },
+        },
+      },
+    ])?.createdBlocks[0];
+    if (added) store.select([added.id]);
+  };
+
   return (
     <>
       <p className="hint" style={{ margin: '2px 4px 8px' }}>
-        Drag a block onto the canvas.
+        {view === 'client' ? 'Drag one in to add a box.' : 'Drag a block onto the canvas.'}
       </p>
       {catalog.categories.map((category) => {
         const types = catalog.blockTypes.filter((info) => info.category === category.id);
@@ -153,16 +242,13 @@ function Palette() {
                 className="palette-item"
                 draggable
                 onDragStart={(event) => onDragStart(event, info.type)}
-                onDoubleClick={() =>
-                  store.apply([
-                    {
-                      op: 'add_block',
-                      block: {
-                        type: info.type,
-                        name: BLOCK_CATALOG[info.type].defaultName,
-                        position: { x: 120, y: 120 },
-                      },
-                    },
+                onDoubleClick={() => addToCanvas(info.type)}
+                onContextMenu={(event) =>
+                  showContextMenu(event, [
+                    { kind: 'heading', label: `${info.icon} ${info.label}` },
+                    { label: 'Add to canvas', onSelect: () => addToCanvas(info.type) },
+                    separator,
+                    { label: 'Copy type name', onSelect: () => void copyText(info.type) },
                   ])
                 }
                 title={info.whenToUse}

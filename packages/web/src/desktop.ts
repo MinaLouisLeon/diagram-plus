@@ -53,6 +53,32 @@ export async function listen(
 }
 
 /* ------------------------------------------------------------------ *
+ * The window
+ * ------------------------------------------------------------------ */
+
+export interface CloseRequest {
+  /** Stop the window closing; call `closeWindow()` once you are ready. */
+  preventDefault: () => void;
+}
+
+/**
+ * Run something before the window closes. Tauri waits for the handler, so it
+ * can take as long as it needs to ask the user a question.
+ */
+export async function onCloseRequested(
+  handler: (event: CloseRequest) => void | Promise<void>,
+): Promise<() => void> {
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
+  return getCurrentWindow().onCloseRequested(handler);
+}
+
+/** Close the window for real, past any close handler. */
+export async function closeWindow(): Promise<void> {
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
+  await getCurrentWindow().destroy();
+}
+
+/* ------------------------------------------------------------------ *
  * The open project
  * ------------------------------------------------------------------ */
 

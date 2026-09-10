@@ -8,10 +8,14 @@ use std::time::{Duration, Instant};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 use tauri::{AppHandle, Emitter};
 
-use crate::diagrams::DIAGRAM_EXT;
+use crate::diagrams::{DESIGN_EXT, DIAGRAM_EXT};
 
 /// Watches `.diagrams/` so a change made outside the window — by the MCP
 /// server, by git, or by editing the JSON directly — reaches the canvas.
+///
+/// Both documents in the directory are watched: the diagram and the screen
+/// designs beside it. Claude drawing a screen between two messages has to land
+/// on the canvas the same way an edited block does.
 ///
 /// Events are coalesced over a short window before they are emitted. A single
 /// save produces several filesystem notifications (the temp file, the rename,
@@ -27,11 +31,20 @@ pub struct Watcher {
     events: Sender<Event>,
 }
 
-fn slug_of(path: &Path) -> Option<String> {
+/// Which document a path names, as a (slug, is-design) pair.
+///
+/// The design extension is tried first: a slug that itself ended in
+/// `.diagram` would otherwise be mistaken for the other kind.
+fn document_of(path: &Path) -> Option<(String, bool)> {
     let name = path.file_name()?.to_string_lossy().to_string();
+    if let Some(slug) = name.strip_suffix(DESIGN_EXT) {
+        if !slug.is_empty() {
+            return Some((slug.to_string(), true));
+        }
+    }
     name.strip_suffix(DIAGRAM_EXT)
         .filter(|slug| !slug.is_empty())
-        .map(str::to_string)
+        .map(|slug| (slug.to_string(), false))
 }
 
 impl Watcher {
@@ -81,8 +94,8 @@ impl Watcher {
 }
 
 fn debounce_loop(app: AppHandle, rx: Receiver<Event>) {
-    // slug -> (was it a deletion, when was it last seen)
-    let mut pending: HashMap<String, (bool, Instant)> = HashMap::new();
+    // (slug, is-design) -> (was it a deletion, when was it last seen)
+    let mut pending: HashMap<(String, bool), (bool, Instant)> = HashMap::new();
 
     loop {
         // Nothing pending means nothing to flush, so wait indefinitely rather
@@ -97,10 +110,10 @@ fn debounce_loop(app: AppHandle, rx: Receiver<Event>) {
             Ok(event) => {
                 let removed = matches!(event.kind, EventKind::Remove(_));
                 for path in &event.paths {
-                    if let Some(slug) = slug_of(path) {
+                    if let Some(key) = document_of(path) {
                         // A rename lands as a remove followed by a create, so
                         // the latest event is the file's real fate.
-                        pending.insert(slug, (removed, Instant::now()));
+                        pending.insert(key, (removed, Instant::now()));
                     }
                 }
             }
@@ -110,20 +123,22 @@ fn debounce_loop(app: AppHandle, rx: Receiver<Event>) {
         }
 
         let now = Instant::now();
-        let ready: Vec<String> = pending
+        let ready: Vec<(String, bool)> = pending
             .iter()
             .filter(|(_, (_, at))| now.duration_since(*at) >= SETTLE)
-            .map(|(slug, _)| slug.clone())
+            .map(|(key, _)| key.clone())
             .collect();
 
-        for slug in ready {
-            let Some((removed, _)) = pending.remove(&slug) else {
+        for key in ready {
+            let Some((removed, _)) = pending.remove(&key) else {
                 continue;
             };
-            let event = if removed {
-                "diagram-removed"
-            } else {
-                "diagram-changed"
+            let (slug, design) = key;
+            let event = match (design, removed) {
+                (false, false) => "diagram-changed",
+                (false, true) => "diagram-removed",
+                (true, false) => "design-changed",
+                (true, true) => "design-removed",
             };
             let _ = app.emit(event, slug);
         }
