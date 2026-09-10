@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::diagrams::DIAGRAM_DIR;
+use crate::paths;
 use crate::watcher::Watcher;
 
 /// The project the window is currently pointed at, and the ones before it.
@@ -170,7 +171,7 @@ pub fn open(app: &AppHandle, path: PathBuf) -> Result<ProjectState, String> {
     if !path.is_dir() {
         return Err(format!("{} is not a folder.", path.display()));
     }
-    let canonical = dunce_canonicalize(&path);
+    let canonical = paths::canonical(&path);
 
     let project = app.state::<Project>();
     project.set_root(canonical.clone());
@@ -185,20 +186,6 @@ pub fn open(app: &AppHandle, path: PathBuf) -> Result<ProjectState, String> {
     let state = project.state();
     let _ = app.emit("project-changed", &state);
     Ok(state)
-}
-
-/// `canonicalize` on Windows returns a `\\?\` path, which is correct but ugly
-/// in a title bar and unusable in a config file a person may read. Strip the
-/// prefix when it is safe to; otherwise use the path as given.
-fn dunce_canonicalize(path: &Path) -> PathBuf {
-    let Ok(canonical) = path.canonicalize() else {
-        return path.to_path_buf();
-    };
-    let text = canonical.to_string_lossy().to_string();
-    match text.strip_prefix(r"\\?\") {
-        Some(rest) if !rest.starts_with("UNC\\") => PathBuf::from(rest),
-        _ => canonical,
-    }
 }
 
 /* ------------------------------------------------------------------ *

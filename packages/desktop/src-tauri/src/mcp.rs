@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Manager, State};
 
+use crate::paths;
 use crate::project::Project;
 
 /// Registering the MCP server with the AI tools on this machine.
@@ -229,9 +230,15 @@ fn detect(id: &str) -> bool {
  * ------------------------------------------------------------------ */
 
 /// Absolute path of the MCP server bundled with the app.
+///
+/// Run through [`paths::plain`] because on Windows the resource resolver
+/// returns a verbatim `\\?\C:\…` path, and `node` cannot load a file named
+/// that way — an entry carrying one is written without complaint and then
+/// fails the moment a client starts it.
 pub fn server_entry(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .resolve("mcp-server.mjs", tauri::path::BaseDirectory::Resource)
+        .map(|entry| paths::plain(&entry))
         .map_err(|err| format!("The bundled MCP server is missing: {err}"))
 }
 
@@ -240,7 +247,7 @@ pub fn server_entry(app: &AppHandle) -> Result<PathBuf, String> {
 /// An absolute path rather than bare `node`, because a desktop client launches
 /// the server with its own environment and may not have the user's PATH.
 fn node_binary() -> Option<PathBuf> {
-    which::which("node").ok()
+    which::which("node").ok().map(|node| paths::plain(&node))
 }
 
 fn node_version(node: &Path) -> Option<String> {
@@ -442,21 +449,53 @@ fn apply_toml(
     Ok(action)
 }
 
-/// Is diagram-plus already registered in this file?
+/// Can a client actually start the server from these arguments?
+///
+/// A verbatim Windows path is the one thing an entry can carry that stops it
+/// dead: `node` reads the `\\?\` as part of the filename and exits before the
+/// server says a word. Builds before this one wrote them, so those entries are
+/// out there — see [`installed_in`] for what is done about it.
+fn args_are_loadable<'a>(args: impl IntoIterator<Item = &'a str>) -> bool {
+    args.into_iter().all(|arg| !arg.starts_with(r"\\?\"))
+}
+
+fn json_entry_is_loadable(entry: &Value) -> bool {
+    match entry.get("args").and_then(Value::as_array) {
+        Some(args) => args_are_loadable(args.iter().filter_map(Value::as_str)),
+        None => true,
+    }
+}
+
+fn toml_entry_is_loadable(entry: &toml_edit::Item) -> bool {
+    match entry.get("args").and_then(|args| args.as_array()) {
+        Some(args) => args_are_loadable(args.iter().filter_map(|arg| arg.as_str())),
+        None => true,
+    }
+}
+
+/// Is diagram-plus registered in this file, by an entry that works?
+///
+/// An entry written by an older build carries a path `node` cannot load, so the
+/// client reports the server as failed. Calling that connected would leave the
+/// user with nothing to click, so it reads as absent instead: the settings
+/// screen offers the install again, and writing it replaces the broken entry.
 fn installed_in(file: &Path, format: Format) -> bool {
     match format {
         Format::McpServers => read_json(file)
             .ok()
             .and_then(|data| data.get("mcpServers")?.get(SERVER_NAME).cloned())
-            .is_some(),
+            .is_some_and(|entry| json_entry_is_loadable(&entry)),
         Format::VscodeServers => read_json(file)
             .ok()
             .and_then(|data| data.get("servers")?.get(SERVER_NAME).cloned())
-            .is_some(),
+            .is_some_and(|entry| json_entry_is_loadable(&entry)),
         Format::Toml => fs::read_to_string(file)
             .ok()
             .and_then(|text| text.parse::<toml_edit::DocumentMut>().ok())
-            .map(|doc| doc.get("mcp_servers").and_then(|s| s.get(SERVER_NAME)).is_some())
+            .and_then(|doc| {
+                let entry = doc.get("mcp_servers")?.get(SERVER_NAME)?.clone();
+                Some(toml_entry_is_loadable(&entry))
+            })
             .unwrap_or(false),
     }
 }
@@ -644,4 +683,37 @@ pub fn mcp_apply(
     }
 
     Ok(McpReport { results, backups })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bug, end to end: the resource resolver hands back a verbatim path,
+    /// and what gets written must still be something node can open.
+    #[test]
+    #[cfg(windows)]
+    fn a_written_entry_carries_a_path_node_can_load() {
+        let resolved = Path::new(r"\\?\C:\Users\a\AppData\Local\diagram-plus\mcp-server.mjs");
+        let entry = definition("node", &paths::plain(resolved), None, false);
+        assert!(json_entry_is_loadable(&entry));
+    }
+
+    #[test]
+    fn an_entry_left_by_an_older_build_reads_as_not_installed() {
+        let entry = json!({
+            "command": "node",
+            "args": [r"\\?\C:\Users\a\AppData\Local\diagram-plus\mcp-server.mjs"],
+        });
+        assert!(!json_entry_is_loadable(&entry));
+    }
+
+    #[test]
+    fn an_entry_pointing_somewhere_else_is_left_alone() {
+        let entry = json!({
+            "command": "node",
+            "args": ["/opt/diagram-plus/mcp-server.mjs"],
+        });
+        assert!(json_entry_is_loadable(&entry));
+    }
 }

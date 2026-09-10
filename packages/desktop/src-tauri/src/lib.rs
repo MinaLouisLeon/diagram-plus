@@ -1,5 +1,6 @@
 mod diagrams;
 mod mcp;
+mod paths;
 mod project;
 mod transfer;
 mod watcher;
