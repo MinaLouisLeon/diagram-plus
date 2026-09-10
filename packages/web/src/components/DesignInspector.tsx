@@ -5,6 +5,7 @@ import {
   type ElementFacts,
   type ScreenDesign,
 } from '@diagram-plus/core/browser';
+import { DesignStyleForm } from './DesignStyle';
 import { store, useEditorState } from '../store';
 
 /**
@@ -14,10 +15,12 @@ import { store, useEditorState } from '../store';
  * falls back to the artboard, since "what screen am I on and what is it for"
  * is the other question this corner has to answer.
  *
- * What it no longer does is edit the look. A screen is CSS now, and a panel of
- * dropdowns over a stylesheet would be a worse way to write CSS than writing
- * CSS. What stays here is what markup cannot say on its own: where a value
- * comes from, what pressing something does, where it goes.
+ * An element is two different questions and the panel asks them one at a time.
+ * **Style** is what it looks like — size, colour, type, spacing — written onto
+ * that element alone. **Spec** is what markup cannot say however it is styled:
+ * where a value comes from, what pressing it does, where it goes. Both edit
+ * the same document through the same operations Claude uses, so a screen
+ * pushed around by hand and one drawn between two messages stay one design.
  */
 
 export function DesignInspector({
@@ -29,14 +32,70 @@ export function DesignInspector({
   screen: ScreenDesign | null;
   element: ElementFacts | null;
 }) {
+  const { inspectorTab, measured } = useEditorState();
   if (!screen) return null;
-  return (
-    <aside className="design-inspector">
-      {element ? (
-        <ElementForm screen={screen} element={element} design={design} />
-      ) : (
+
+  if (!element) {
+    return (
+      <aside className="design-inspector">
         <ScreenForm screen={screen} element={element} />
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="design-inspector element">
+      <div className="inspector-head">
+        <span className="inspector-title">{element.label}</span>
+        <code className="inspector-tag">{element.tag}</code>
+      </div>
+
+      <div className="seg inspector-tabs" role="group" aria-label="What to edit">
+        <button
+          className={`btn small${inspectorTab === 'style' ? ' primary' : ''}`}
+          onClick={() => store.setInspectorTab('style')}
+          title="What it looks like"
+        >
+          Style
+        </button>
+        <button
+          className={`btn small${inspectorTab === 'spec' ? ' primary' : ''}`}
+          onClick={() => store.setInspectorTab('spec')}
+          title="What it says, and what it means"
+        >
+          Spec
+        </button>
+      </div>
+
+      {inspectorTab === 'style' ? (
+        <DesignStyleForm
+          design={design}
+          screen={screen}
+          element={element}
+          measured={measured}
+        />
+      ) : (
+        <ElementForm screen={screen} element={element} />
       )}
+
+      <div className="inspector-actions">
+        <button
+          className="btn subtle small"
+          onClick={() =>
+            store.designEdit([{ op: 'duplicate_node', screen: screen.id, element: element.id }])
+          }
+        >
+          Duplicate
+        </button>
+        <button
+          className="btn subtle small danger"
+          onClick={() =>
+            store.designEdit([{ op: 'remove_node', screen: screen.id, element: element.id }])
+          }
+        >
+          Remove
+        </button>
+      </div>
     </aside>
   );
 }
@@ -275,11 +334,9 @@ function ScreenForm({
  * things the diagram does not have is how a spec goes stale.
  */
 function ElementForm({
-  design,
   screen,
   element,
 }: {
-  design: DesignDocument;
   screen: ScreenDesign;
   element: ElementFacts;
 }) {
@@ -302,11 +359,6 @@ function ElementForm({
 
   return (
     <>
-      <div className="inspector-head">
-        <span className="inspector-title">{element.label}</span>
-        <code className="inspector-tag">{element.tag}</code>
-      </div>
-
       <section className="inspector-section">
         <h4>What it says</h4>
         <label className="field">
@@ -433,36 +485,15 @@ function ElementForm({
         <h4>Notes for whoever builds it</h4>
         <textarea
           rows={2}
-          value={design.screens.length ? element.id && '' : ''}
+          value={element.note}
           placeholder="Anything the markup cannot say"
           onChange={(e) => edit('data-note', e.target.value || null)}
         />
       </section>
 
-      <div className="inspector-actions">
-        <button
-          className="btn subtle small"
-          onClick={() =>
-            store.designEdit([
-              { op: 'duplicate_node', screen: screen.id, element: element.id },
-            ])
-          }
-        >
-          Duplicate
-        </button>
-        <button
-          className="btn subtle small danger"
-          onClick={() =>
-            store.designEdit([{ op: 'remove_node', screen: screen.id, element: element.id }])
-          }
-        >
-          Remove
-        </button>
-      </div>
-
       <p className="inspector-hint">
-        The look of a screen lives in its CSS, not here. Edit the shared stylesheet in the Design
-        system panel, or ask Claude to restyle it.
+        A look that should be true of every button belongs in the shared stylesheet rather than on
+        this one — edit it in the Design system panel, or ask Claude to restyle it.
       </p>
     </>
   );

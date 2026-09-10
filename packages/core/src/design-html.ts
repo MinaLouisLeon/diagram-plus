@@ -1,5 +1,6 @@
 import { DefaultTreeAdapterTypes, parseFragment, serialize, serializeOuter } from 'parse5';
 import { newId } from './ids.js';
+import { sanitizeInlineStyle } from './design-style.js';
 
 /**
  * The screen designs, as markup.
@@ -253,6 +254,19 @@ export function sanitizeHtml(html: string): SanitizeResult {
           if (name.startsWith('on')) {
             removed.push(`${name} on <${tag}>`);
             removeAttr(element, attr.name);
+            continue;
+          }
+          // An element's own look, which the properties panel writes and a
+          // model may write by hand. It goes through the same gate the
+          // stylesheet does — a `url()` reaching the network is no more
+          // welcome for being on one element than in a rule.
+          if (name === 'style') {
+            const cleaned = sanitizeInlineStyle(attr.value);
+            if (cleaned.removed.length) {
+              removed.push(...cleaned.removed.map((what) => `${what} on <${tag}>`));
+            }
+            if (cleaned.style) setAttr(element, attr.name, cleaned.style);
+            else removeAttr(element, attr.name);
             continue;
           }
           if (URL_ATTRS.has(name) && !isSafeUrl(attr.value)) {

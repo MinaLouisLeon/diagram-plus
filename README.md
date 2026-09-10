@@ -324,6 +324,17 @@ properties and a class per type token, so a screen says `var(--color-accent)` an
 at once. Every project starts with a shared stylesheet good enough that plain
 semantic markup already looks deliberate.
 
+Anything on a screen can still be pushed around by hand. Select an element and the
+properties panel edits what it looks like — size, spacing, type, colour, border,
+shadow — with handles on the artboard for sizing it by eye. Every box shows what the
+element already resolves to, read off the artboard rather than out of the file, so
+you are changing a real screen and not filling in a form; every colour offers the
+tokens first; and every override is marked, with one click to take it off again. It
+writes to that element's own `style`, and it is the same `set_style` operation Claude
+uses over MCP, so a screen nudged during a review and one restyled between two
+messages stay one design. A look that should be true of every button still belongs in
+the shared stylesheet — this is for the exceptions.
+
 Screens are never silently lost. Delete a block from the diagram and its design is
 flagged, not destroyed; re-word a screen here and the next sync keeps your wording.
 A design written in the old format is translated on the way in, binding by binding.

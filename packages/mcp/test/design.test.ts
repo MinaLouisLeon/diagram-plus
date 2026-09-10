@@ -202,6 +202,41 @@ describe('the design tools', () => {
     expect(products.html).toContain('Search products');
   });
 
+  it('restyles one element, through the same operation the panel writes', async () => {
+    await seedDiagram();
+    await call('sync_screen_designs', { diagram: 'shop' });
+
+    await call('design_screen', {
+      diagram: 'shop',
+      screen: 'Login',
+      html: '<main class="screen"><button data-el="els_go">Sign in</button></main>',
+    });
+
+    const { text, isError } = await call('update_screen_design', {
+      diagram: 'shop',
+      operations: [
+        {
+          op: 'set_style',
+          screen: 'Login',
+          element: 'els_go',
+          styles: { 'font-size': '20px', 'background-color': 'var(--color-accent)' },
+        },
+      ],
+    });
+    expect(isError).toBe(false);
+    expect(text).toContain('Applied 1 of 1');
+
+    const design = await designs.read('shop');
+    const login = design.screens.find((s) => s.name === 'Login')!;
+    expect(login.html).toContain('font-size: 20px');
+    expect(login.html).toContain('background-color: var(--color-accent)');
+
+    // And the spec says so, because an element styled apart from the
+    // stylesheet is exactly what an implementer has to be told about.
+    const spec = await call('read_screen_design', { diagram: 'shop', screen: 'Login' });
+    expect(spec.text).toContain('styled: font-size: 20px');
+  });
+
   it('adds a variant artboard for the same screen', async () => {
     await seedDiagram();
     await call('sync_screen_designs', { diagram: 'shop' });

@@ -176,6 +176,23 @@ export const designOperationSchema = z.discriminatedUnion('op', [
     value: z.string().nullable().describe('Null removes it.'),
   }),
   z.object({
+    op: z.literal('set_style'),
+    screen: screenRef,
+    element: elementRef,
+    styles: z
+      .record(z.string(), z.string().nullable())
+      .describe(
+        'CSS declarations for this element alone — { "font-size": "20px", "color": ' +
+          '"var(--color-accent)" }. Null on a property takes the override back off. ' +
+          'Write values against the tokens where there is one. Anything true of every ' +
+          'button belongs in the stylesheet instead; this is for exceptions.',
+      ),
+    replace: z
+      .boolean()
+      .optional()
+      .describe('Drop every existing override first, rather than merging over them.'),
+  }),
+  z.object({
     op: z.literal('set_text'),
     screen: screenRef,
     element: elementRef,

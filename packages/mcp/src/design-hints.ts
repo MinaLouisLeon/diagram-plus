@@ -30,6 +30,10 @@ export const DESIGN_RULES = [
     'paste the row out six times.',
   'No <script>, no inline event handlers, no remote images — they are stripped on the way in. ' +
     'For imagery use inline <svg> or a CSS gradient, and describe photographs in alt text.',
+  'A look true of every button belongs in the stylesheet; a one-off — this heading bigger, this ' +
+    'card grey — goes on the element with set_style, still written against the tokens. That is ' +
+    'what the properties panel writes, so an element carrying a style attribute is one the user ' +
+    'styled by hand: leave it as it is unless you were asked to change it.',
 ] .map((rule, index) => `${index + 1}. ${rule}`).join('\n');
 
 /** The attributes that carry the contract, since HTML has no opinion on them. */

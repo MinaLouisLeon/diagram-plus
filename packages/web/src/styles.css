@@ -1187,3 +1187,75 @@ pre.spec {
 .inspector-checks { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; margin-top: 8px; }
 .inspector-actions { display: flex; gap: 6px; padding: 12px; }
 .inspector-hint { padding: 0 12px 12px; font-size: 11.5px; color: var(--text-dim); }
+
+/* ---------- sizing an element by eye ---------- */
+
+/* Drawn over the iframe rather than inside it: the design's own document stays
+   exactly what will be built, with no editor furniture anywhere in it. */
+.dz-handles { position: absolute; pointer-events: none; z-index: 4; }
+.dz-grip {
+  position: absolute; width: 9px; height: 9px; pointer-events: auto;
+  background: var(--bg-panel); border: 1.5px solid var(--accent); border-radius: 2px;
+}
+.dz-grip.e { right: -5px; top: 50%; margin-top: -4.5px; cursor: ew-resize; transform-origin: right center; }
+.dz-grip.s { bottom: -5px; left: 50%; margin-left: -4.5px; cursor: ns-resize; transform-origin: center bottom; }
+.dz-grip.se { right: -5px; bottom: -5px; cursor: nwse-resize; transform-origin: right bottom; }
+.dz-handles-size {
+  position: absolute; left: 0; bottom: -19px; transform-origin: left top;
+  padding: 1px 5px; border-radius: 3px;
+  background: var(--accent); color: #fff;
+  font-size: 10px; line-height: 1.4; white-space: nowrap;
+}
+
+/* ---------- the style half of the properties panel ---------- */
+
+.design-inspector.element { padding: 0; gap: 0; }
+.inspector-tabs { display: flex; gap: 4px; padding: 4px 12px 10px; }
+.inspector-tabs .btn { flex: 1; }
+
+.style-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; }
+.style-prop { display: flex; flex-direction: column; gap: 3px; min-width: 0; margin-bottom: 6px; }
+.style-prop.wide { grid-column: 1 / -1; }
+.style-prop-label {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim);
+}
+/* An overridden property is marked, because "is this element like the others"
+   is the one question the artboard cannot answer — and the answer decides
+   whether a change to the stylesheet will reach it. */
+.style-prop.set > .style-prop-label { color: var(--accent); }
+.style-clear {
+  margin-left: auto; padding: 0 3px; line-height: 1;
+  border: 0; background: none; color: var(--text-dim); cursor: pointer; font-size: 13px;
+}
+.style-clear:hover { color: var(--danger, #dc2626); }
+
+.design-inspector .style-prop input,
+.design-inspector .style-prop select,
+.design-inspector .style-prop textarea {
+  font-size: 12.5px; padding: 4px 6px; width: 100%;
+}
+.style-color { display: flex; gap: 4px; align-items: center; }
+.style-color > input[type='text'],
+.style-color > input:not([type]) { flex: 1; min-width: 0; font-family: var(--mono, ui-monospace, monospace); font-size: 11.5px; }
+.design-inspector .style-swatch {
+  flex: 0 0 26px; width: 26px; height: 24px; padding: 1px; cursor: pointer;
+}
+.design-inspector .style-font-pick { flex: 0 0 34px; width: 34px; padding: 4px 2px; }
+
+.style-sides { display: flex; gap: 4px; align-items: center; }
+.design-inspector .style-side { flex: 1; min-width: 0; text-align: center; }
+.style-link {
+  flex: 0 0 24px; height: 24px; padding: 0; cursor: pointer; font-size: 11px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-input); color: var(--text-dim);
+}
+.style-link.on { color: var(--accent); border-color: var(--accent); }
+.style-sides-key { font-size: 9.5px; color: var(--text-dim); letter-spacing: 0.02em; }
+
+.style-more > summary {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-dim); cursor: pointer; padding: 2px 0 6px;
+}
+.style-note { margin: 2px 0 0; font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+.design-inspector .style-prop input[type='range'] { padding: 0; }
